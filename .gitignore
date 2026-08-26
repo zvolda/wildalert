@@ -1,0 +1,36 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Gradle / Kotlin / JVM
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+*.class
+*.log
+out/
+
+# Python (recognition service)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ML model weights (large; not committed)
+*.pt
+*.pth
+*.onnx
+models/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
