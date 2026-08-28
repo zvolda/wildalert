@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm")
     kotlin("plugin.spring")
+    kotlin("plugin.jpa")            // generates a no-arg constructor for @Entity classes
     id("org.springframework.boot")
     id("io.spring.dependency-management")
 }
@@ -9,7 +10,6 @@ group = "com.wildalert"
 version = "0.0.1-SNAPSHOT"
 
 java {
-    // Use the JDK 25 that's installed. Gradle will complain if it can't find it.
     toolchain {
         languageVersion = JavaLanguageVersion.of(25)
     }
@@ -20,15 +20,27 @@ repositories {
 }
 
 dependencies {
+    // Web (REST controllers) + JSON
     implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+
+    // Persistence
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    runtimeOnly("org.postgresql:postgresql")
+
+    // Request validation (@Valid, @Email, ...)
+    implementation("org.springframework.boot:spring-boot-starter-validation")
+
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
+    // Testing (JUnit 5, Mockito, MockMvc) — no Docker required
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 
 kotlin {
     compilerOptions {
-        // Treat Spring's nullability annotations as strict Kotlin null-safety.
         freeCompilerArgs.add("-Xjsr305=strict")
     }
 }

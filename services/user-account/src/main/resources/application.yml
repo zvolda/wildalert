@@ -2,5 +2,24 @@ spring:
   application:
     name: user-account
 
+  # Connects to the local Postgres from compose.yml. Env vars override the defaults,
+  # so the same build runs against managed Postgres in the cloud later.
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/wildalert}
+    username: ${POSTGRES_USER:wildalert}
+    password: ${POSTGRES_PASSWORD:wildalert}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate only validates that entities match it.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+
 server:
   port: 8081
