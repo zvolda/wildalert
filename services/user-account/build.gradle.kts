@@ -47,4 +47,11 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // Run from the repo root so Spring finds the shared .env there.
+    workingDir = rootProject.projectDir
+}
+
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    // Same reason: bootRun should also see the repo-root .env.
+    workingDir = rootProject.projectDir
 }
