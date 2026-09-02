@@ -4,3 +4,4 @@ rootProject.name = "wildalert"
 // (email-ingestion, notification, ...). The recognition service is Python and lives
 // outside the Gradle build.
 include("services:user-account")
+include("services:notification")
