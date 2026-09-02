@@ -2,5 +2,17 @@ spring:
   application:
     name: notification
 
+  # Optional local secrets (Twilio creds) from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
 server:
   port: 8082
+
+sms:
+  # 'logging' (fake, default) or 'twilio'
+  provider: ${SMS_PROVIDER:logging}
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    sender-id: ${TWILIO_SENDER_ID:}
