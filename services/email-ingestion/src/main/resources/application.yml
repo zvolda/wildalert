@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: email-ingestion
+
+  # Trail-cam emails can carry large photos; raise the request size limit.
+  servlet:
+    multipart:
+      max-request-size: 25MB
+      max-file-size: 25MB
+
+server:
+  port: 8083
+  # Allow a larger raw email body (default is ~2MB).
+  tomcat:
+    max-http-form-post-size: 25MB
+    max-swallow-size: 25MB

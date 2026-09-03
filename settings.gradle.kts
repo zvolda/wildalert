@@ -5,3 +5,4 @@ rootProject.name = "wildalert"
 // outside the Gradle build.
 include("services:user-account")
 include("services:notification")
+include("services:email-ingestion")
