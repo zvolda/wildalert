@@ -26,6 +26,10 @@ dependencies {
     // Jakarta Mail (MimeMessage parsing) via the mail starter
     implementation("org.springframework.boot:spring-boot-starter-mail")
 
+    // AWS S3 SDK v2 — used to talk to Cloudflare R2 (S3-compatible), only when storage.provider=r2
+    implementation(platform("software.amazon.awssdk:bom:2.31.0"))
+    implementation("software.amazon.awssdk:s3")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 
@@ -37,4 +41,10 @@ kotlin {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    // Run from the repo root so Spring finds the shared .env there.
+    workingDir = rootProject.projectDir
+}
+
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    workingDir = rootProject.projectDir
 }

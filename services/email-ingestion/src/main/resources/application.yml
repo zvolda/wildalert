@@ -2,6 +2,10 @@ spring:
   application:
     name: email-ingestion
 
+  # Optional local secrets (R2 creds) from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
   # Trail-cam emails can carry large photos; raise the request size limit.
   servlet:
     multipart:
@@ -14,3 +18,13 @@ server:
   tomcat:
     max-http-form-post-size: 25MB
     max-swallow-size: 25MB
+
+storage:
+  # 'logging' (fake, default) or 'r2'
+  provider: ${STORAGE_PROVIDER:logging}
+  r2:
+    endpoint: ${R2_ENDPOINT:}
+    bucket: ${R2_BUCKET:}
+    access-key: ${R2_ACCESS_KEY:}
+    secret-key: ${R2_SECRET_KEY:}
+    region: ${R2_REGION:auto}
