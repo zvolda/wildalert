@@ -1,5 +1,6 @@
 package com.wildalert.emailingestion.email
 
+import com.wildalert.emailingestion.storage.LoggingImageStore
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
@@ -10,9 +11,9 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
-// Uses the real EmailParser (imported) — no mocking needed for a pure component.
+// Uses the real EmailParser + fake LoggingImageStore (imported) — no mocking needed.
 @WebMvcTest(EmailController::class)
-@Import(EmailParser::class)
+@Import(EmailParser::class, LoggingImageStore::class)
 class EmailControllerTest {
 
     @Autowired
@@ -31,5 +32,6 @@ class EmailControllerTest {
             .andExpect(jsonPath("$.from").value("hunter@example.com"))
             .andExpect(jsonPath("$.imageCount").value(1))
             .andExpect(jsonPath("$.images[0].filename").value("boar.png"))
+            .andExpect(jsonPath("$.images[0].storageKey").value(org.hamcrest.Matchers.matchesRegex("inbound/\\d{4}/\\d{2}/\\d{2}/[0-9a-f-]+\\.png")))
     }
 }
