@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
@@ -29,6 +30,15 @@ class HunterController(
     @GetMapping("/{id}")
     fun getById(@PathVariable id: UUID): HunterResponse =
         HunterResponse.from(service.getById(id))
+
+    /**
+     * Look up a hunter by email address, so other services (e.g. email-ingestion) can match a
+     * forwarded email's sender to a hunter. Returns 404 if no hunter has that email.
+     * A distinct `/by-email` path (not a path variable) so it never collides with `/{id}`.
+     */
+    @GetMapping("/by-email")
+    fun getByEmail(@RequestParam email: String): HunterResponse =
+        HunterResponse.from(service.getByEmail(email))
 
     /** Update phone / plan / active. Returns the updated record. */
     @PutMapping("/{id}")

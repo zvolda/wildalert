@@ -30,6 +30,10 @@ class HunterService(
     fun getById(id: UUID): Hunter =
         repository.findById(id).orElseThrow { HunterNotFoundException(id) }
 
+    @Transactional(readOnly = true)
+    fun getByEmail(email: String): Hunter =
+        repository.findByEmail(email) ?: throw HunterNotFoundByEmailException(email)
+
     @Transactional
     fun update(id: UUID, request: UpdateHunterRequest): Hunter {
         val hunter = getById(id)

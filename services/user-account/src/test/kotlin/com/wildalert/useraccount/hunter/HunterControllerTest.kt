@@ -56,6 +56,26 @@ class HunterControllerTest {
             .andExpect(status().isNotFound)
     }
 
+    @Test
+    fun `GET by-email returns the hunter when it exists`() {
+        val id = UUID.randomUUID()
+        given(service.getByEmail("hunter@example.com")).willReturn(sampleHunter(id))
+
+        mockMvc.perform(get("/api/hunters/by-email").param("email", "hunter@example.com"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(id.toString()))
+            .andExpect(jsonPath("$.email").value("hunter@example.com"))
+    }
+
+    @Test
+    fun `GET by-email returns 404 when no hunter has that email`() {
+        willThrow(HunterNotFoundByEmailException("nobody@example.com"))
+            .given(service).getByEmail("nobody@example.com")
+
+        mockMvc.perform(get("/api/hunters/by-email").param("email", "nobody@example.com"))
+            .andExpect(status().isNotFound)
+    }
+
     // --- helpers ---
 
     private fun MockMvc.postJson(body: String) =

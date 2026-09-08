@@ -51,6 +51,23 @@ class HunterServiceTest {
     }
 
     @Test
+    fun `getByEmail returns the hunter when the email exists`() {
+        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
+        given(repository.findByEmail("hunter@example.com")).willReturn(existing)
+
+        val result = service.getByEmail("hunter@example.com")
+
+        assertThat(result).isSameAs(existing)
+    }
+
+    @Test
+    fun `getByEmail throws when no hunter has that email`() {
+        given(repository.findByEmail("nobody@example.com")).willReturn(null)
+
+        assertThrows<HunterNotFoundByEmailException> { service.getByEmail("nobody@example.com") }
+    }
+
+    @Test
     fun `update changes only the provided fields`() {
         val id = UUID.randomUUID()
         val existing = Hunter("a@b.com", "+420111111111", Plan.FREE, active = true)
