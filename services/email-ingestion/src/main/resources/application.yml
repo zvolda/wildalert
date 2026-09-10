@@ -24,6 +24,10 @@ services:
   user-account:
     base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
 
+events:
+  # 'logging' (fake, default) or 'kafka' (Phase 5)
+  provider: ${EVENTS_PROVIDER:logging}
+
 storage:
   # 'logging' (fake, default) or 'r2'
   provider: ${STORAGE_PROVIDER:logging}
