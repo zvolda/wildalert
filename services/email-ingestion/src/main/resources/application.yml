@@ -19,6 +19,11 @@ server:
     max-http-form-post-size: 25MB
     max-swallow-size: 25MB
 
+services:
+  # Base URL of the user-account service, used to match a sender to a hunter.
+  user-account:
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+
 storage:
   # 'logging' (fake, default) or 'r2'
   provider: ${STORAGE_PROVIDER:logging}
