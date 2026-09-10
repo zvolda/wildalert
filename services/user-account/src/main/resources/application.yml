@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: user-account
+
+  # Loads DB creds from the git-ignored .env (repo root) for local dev.
+  # In the cloud these come from real environment variables instead.
+  config:
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate only validates that entities match it.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+
+server:
+  port: 8081

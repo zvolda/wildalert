@@ -105,16 +105,23 @@ then the async flow, then deploy, then scale.
 ---
 
 ### Phase 0 — Foundations
-- **Goal / learn:** monorepo layout, Gradle Kotlin DSL, Docker, local dev environment.
-- **Deliverable:** an empty-but-runnable repo skeleton + local infra that starts with one command.
+- **Goal / learn:** monorepo layout, Gradle Kotlin DSL, local containerized dev via the
+  free Docker Engine running in WSL2.
+- **Deliverable:** a repo skeleton that builds + local infra that starts with one command.
 - **Tasks:**
   - [ ] Monorepo layout: one folder per service
-  - [ ] Gradle (Kotlin DSL) multi-module setup; Java/Kotlin toolchain
-  - [ ] Dockerfile template per service
-  - [ ] `docker-compose.yml` for local dev: Postgres + Kafka (+ Kafka UI)
-  - [ ] Root README: how to run locally
+  - [ ] Gradle (Kotlin DSL) multi-module setup; Java/Kotlin toolchain (JDK 25 already present)
+  - [ ] Dockerfile template per service (OCI images)
+  - [ ] `compose.yml` for local dev: Postgres + Kafka (+ Kafka UI)
+  - [ ] Root README: one-time WSL2 + Docker Engine setup, then how to run locally
 - **DoD (review against):** `docker compose up` starts Postgres + Kafka cleanly; repo
   builds with `./gradlew build`; README lets a newcomer run it from scratch.
+
+> **Dev runtime:** Docker **Desktop** is avoided (company licensing). We use the free,
+> Apache-2.0 **Docker Engine** inside **WSL2** — identical `docker`/`compose` commands, no
+> license. WSL2 is already enabled on this machine; only an Ubuntu distro + Docker Engine
+> need installing. Prod still uses managed services (see Phase 6). Testcontainers works
+> because it talks to the WSL2 Docker socket.
 
 ### Phase 1 — User/Account Service (first Spring Boot service)
 - **Goal / learn:** Spring Boot + Kotlin basics — controllers, JPA, migrations, tests.
@@ -123,8 +130,8 @@ then the async flow, then deploy, then scale.
   - [ ] Spring Boot + Kotlin project (Web, Data JPA, Validation, Flyway)
   - [ ] Entity + Flyway migration: hunter (email, phone, plan, active)
   - [ ] REST endpoints: register / update / get hunter
-  - [ ] Postgres via Docker Compose
-  - [ ] Unit + integration tests (Testcontainers)
+  - [ ] Postgres via local `compose.yml` (Docker Engine in WSL2)
+  - [ ] Unit + integration tests (Testcontainers, via the WSL2 Docker socket)
 - **DoD (review against):** endpoints work end-to-end against Postgres; input validation
   present; migrations run clean; tests green; no secrets in code.
 
@@ -237,7 +244,8 @@ then the async flow, then deploy, then scale.
 
 ## Verification (how we prove each piece works)
 
-- **Per service:** unit + integration tests (Testcontainers for Postgres/Kafka).
+- **Per service:** unit + integration tests (Testcontainers for Postgres/Kafka, via the
+  WSL2 Docker Engine socket).
 - **Recognition accuracy:** run SpeciesNet against a folder of real B/W night trail-cam
   photos; confirm correct species above the confidence threshold.
 - **End-to-end:** forward a real email with a photo attachment → confirm an SMS arrives

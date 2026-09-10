@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: email-ingestion
+
+  # Optional local secrets (R2 creds) from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
+  # Trail-cam emails can carry large photos; raise the request size limit.
+  servlet:
+    multipart:
+      max-request-size: 25MB
+      max-file-size: 25MB
+
+server:
+  port: 8083
+  # Allow a larger raw email body (default is ~2MB).
+  tomcat:
+    max-http-form-post-size: 25MB
+    max-swallow-size: 25MB
+
+services:
+  # Base URL of the user-account service, used to match a sender to a hunter.
+  user-account:
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+
+events:
+  # 'logging' (fake, default) or 'kafka' (Phase 5)
+  provider: ${EVENTS_PROVIDER:logging}
+
+storage:
+  # 'logging' (fake, default) or 'r2'
+  provider: ${STORAGE_PROVIDER:logging}
+  r2:
+    endpoint: ${R2_ENDPOINT:}
+    bucket: ${R2_BUCKET:}
+    access-key: ${R2_ACCESS_KEY:}
+    secret-key: ${R2_SECRET_KEY:}
+    region: ${R2_REGION:auto}
