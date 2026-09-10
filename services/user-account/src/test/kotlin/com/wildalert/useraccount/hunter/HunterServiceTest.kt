@@ -51,6 +51,19 @@ class HunterServiceTest {
     }
 
     @Test
+    fun `register normalizes the email to lowercase and trims whitespace`() {
+        // Stubbed for the normalized form; register must call it with that, not the raw input.
+        given(repository.existsByEmail("hunter@example.com")).willReturn(false)
+        given(repository.save(any(Hunter::class.java))).willAnswer { it.getArgument<Hunter>(0) }
+
+        val result = service.register(
+            RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789", Plan.FREE),
+        )
+
+        assertThat(result.email).isEqualTo("hunter@example.com")
+    }
+
+    @Test
     fun `getByEmail returns the hunter when the email exists`() {
         val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
         given(repository.findByEmail("hunter@example.com")).willReturn(existing)
@@ -65,6 +78,17 @@ class HunterServiceTest {
         given(repository.findByEmail("nobody@example.com")).willReturn(null)
 
         assertThrows<HunterNotFoundByEmailException> { service.getByEmail("nobody@example.com") }
+    }
+
+    @Test
+    fun `getByEmail normalizes the lookup so case and whitespace do not matter`() {
+        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
+        // Stubbed for the normalized form; a raw-input lookup would miss and throw.
+        given(repository.findByEmail("hunter@example.com")).willReturn(existing)
+
+        val result = service.getByEmail("  Hunter@Example.COM ")
+
+        assertThat(result).isSameAs(existing)
     }
 
     @Test

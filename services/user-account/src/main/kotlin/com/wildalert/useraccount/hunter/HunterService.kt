@@ -15,11 +15,12 @@ class HunterService(
 
     @Transactional
     fun register(request: RegisterHunterRequest): Hunter {
-        if (repository.existsByEmail(request.email)) {
-            throw DuplicateEmailException(request.email)
+        val email = normalizeEmail(request.email)
+        if (repository.existsByEmail(email)) {
+            throw DuplicateEmailException(email)
         }
         val hunter = Hunter(
-            email = request.email,
+            email = email,
             phone = request.phone,
             plan = request.plan,
         )
@@ -31,8 +32,17 @@ class HunterService(
         repository.findById(id).orElseThrow { HunterNotFoundException(id) }
 
     @Transactional(readOnly = true)
-    fun getByEmail(email: String): Hunter =
-        repository.findByEmail(email) ?: throw HunterNotFoundByEmailException(email)
+    fun getByEmail(email: String): Hunter {
+        val normalized = normalizeEmail(email)
+        return repository.findByEmail(normalized) ?: throw HunterNotFoundByEmailException(normalized)
+    }
+
+    /**
+     * Emails are case-insensitive in practice, and forwarded senders arrive with inconsistent
+     * casing/whitespace (e.g. "Hunter@Example.com "). Storing and looking them up in a canonical
+     * lowercase, trimmed form makes matching reliable and keeps the unique constraint meaningful.
+     */
+    private fun normalizeEmail(email: String): String = email.trim().lowercase()
 
     @Transactional
     fun update(id: UUID, request: UpdateHunterRequest): Hunter {
