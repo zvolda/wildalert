@@ -39,3 +39,12 @@ uvicorn app.main:app --reload --port 8084
 ```bash
 pytest
 ```
+
+## Docker
+
+Self-contained image (build context is this directory), CPU build:
+
+```bash
+docker build -t wildalert-recognition services/recognition
+docker run -p 8084:8084 wildalert-recognition
+```
