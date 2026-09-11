@@ -17,6 +17,22 @@ class Recognition(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class RecognitionResult(Recognition):
+    """Classifier output plus the threshold decision returned to callers."""
+
+    low_confidence: bool
+
+
+def apply_threshold(result: Recognition, threshold: float) -> RecognitionResult:
+    """Flags the result as low-confidence when it falls below the threshold. This is policy,
+    kept out of the classifier so the model only reports what it sees, not what we do about it."""
+    return RecognitionResult(
+        species=result.species,
+        confidence=result.confidence,
+        low_confidence=result.confidence < threshold,
+    )
+
+
 class Classifier(Protocol):
     """Classifies raw image bytes into a species + confidence."""
 

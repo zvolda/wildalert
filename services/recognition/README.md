@@ -26,7 +26,13 @@ uvicorn app.main:app --reload --port 8084
 ```
 
 - Health: http://localhost:8084/health
+- Recognize: `POST /recognize` (multipart image) → `{species, confidence, low_confidence}`
 - Interactive API docs (FastAPI): http://localhost:8084/docs
+
+## Configuration
+
+- `RECOGNITION_CONFIDENCE_THRESHOLD` (default `0.7`) — results below this are flagged
+  `low_confidence: true`, so we never assert a species we're unsure of.
 
 ## Test
 
