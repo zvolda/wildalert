@@ -49,9 +49,20 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   image + broker: boar → `wild boar` 1.00; mouflon → `fallow deer` 0.65 flagged
   `lowConfidence` (threshold caught a misclassification); bad messages skipped; LAG 0; restart
   reprocessed nothing.
+- **Slice 4 (done, pending review):** notification consumes `animal.recognized`
+  (`AnimalRecognizedListener`, Spring Kafka, on with `events.provider=kafka`) →
+  `HunterClient` (`GET /api/hunters/{id}`) → `SmsPolicy` → `SmsSender`. Policy: one SMS per
+  photo; confident → "WildAlert: wild boar detected (99% confidence)"; low confidence → hedged
+  "animal detected, species uncertain (maybe fallow deer)"; unknown sender / deleted / inactive
+  hunter → no SMS; English. user-account outage is thrown (retried by Spring Kafka's default
+  error handler, then skipped). Added `services/notification/Dockerfile` + root `.dockerignore`.
+  Verified full chain in WSL (ImageReceived → DeepFaune worker → notification → fake SMS) with
+  real user-account + Postgres: all 6 cases correct, LAG 0.
 - **Remaining slices:**
-  1. Notification consumer (Kotlin): consume `animal.recognized` → SMS policy → send SMS.
-  2. Hardening: retries, dead-letter topic, idempotency on `sourceEventId`, outbox.
+  1. Hardening: idempotency on `sourceEventId` (no double SMS on redelivery), retries +
+     dead-letter topics, outbox.
+  2. True end-to-end from a raw email: email-ingestion container (Dockerfile) with
+     `STORAGE_PROVIDER=filesystem` + `EVENTS_PROVIDER=kafka` sharing the image volume.
 
 ## Remaining phases
 - **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
@@ -73,11 +84,25 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
+- **Hunter matching by `From` header breaks real forwarding — fix before launch:**
+  email-ingestion matches only the email's `From` address (`EmailParser`). Automatic forwarding
+  rules (Gmail/Outlook) usually keep the camera service's address in `From`, and cameras can
+  email us directly, so most real photos would arrive as "unknown sender" → no SMS. Also misses
+  aliases / a different forwarding address. **Planned fix:** a personal inbound address per
+  hunter (e.g. `jan-7f3k9q@in.wildalert.app`, Cloudflare Email Routing catch-all) and match on
+  the **recipient** instead: new `inbound_address` column + lookup endpoint in user-account,
+  recipient-based matching in email-ingestion. See ROADMAP Phase 5.
 - **`HunterLookupClient` resilience:** only catches 404; if user-account is down, the
   ingestion webhook 500s and no event is created. Fix = also catch connection errors → treat
   as no-match (degrade gracefully). _Not yet done._
 - **Recognition first-request latency:** model loads on first `/recognize` (~1 min); could
-  warm at startup.
+  warm at startup. (The Kafka worker already loads it at startup.)
+- **Model licences — resolve before charging money:** `MegaDetectorV6("MDV6-yolov9-c")` is
+  Ultralytics-based (**AGPL-3.0**, a concern for a paid network service); PyTorch-Wildlife also
+  ships MIT (`megadetectorv6_mit`) and Apache (`rtdetr_apache`) MDv6 variants — swap and re-run the
+  accuracy check. DeepFaune weights are **CC BY-SA 4.0** per the loader header (commercial use
+  OK with attribution to CNRS/DeepFaune; confirm on deepfaune.cnrs.fr). Not legal advice — get a
+  licensing check before launch.
 - **Local-dev env limits (this machine):** WSL2 shuts the distro down between commands
   (kills containers), and the Windows host can't reach WSL2 Docker ports — so Windows-JVM
   apps/Testcontainers can't hit WSL Kafka/Postgres. Verify integration inside WSL;

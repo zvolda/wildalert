@@ -212,6 +212,12 @@ then the async flow, then deploy, then scale.
   - [ ] Consumer logic in a transport-free `handle(event)`; Kafka loop is a thin adapter
         (keeps the Pub/Sub-push option open)
   - [ ] End-to-end: forwarded email → recognized → SMS delivered
+  - [ ] **Per-hunter inbound address** (e.g. `jan-7f3k9q@in.wildalert.app`): match the hunter by
+        the email's **recipient**, not its `From` header — auto-forwarding rules keep the camera's
+        address in `From`, and cameras can email us directly. user-account: `inbound_address`
+        column (Flyway), generated on register, `GET /api/hunters/by-inbound-address`;
+        email-ingestion: read the recipient (`To`/`Delivered-To`, or the envelope recipient the
+        webhook passes) and look up by it. Keep `From` matching as a fallback or drop it.
   - [ ] Retries + dead-letter handling for failures
   - [ ] Idempotency (don't double-SMS on redelivery)
   - [ ] **Transactional outbox** (Postgres) so a DB write and its event can't diverge
@@ -227,7 +233,8 @@ then the async flow, then deploy, then scale.
         using the scale-to-zero trade-off in Open Decisions*
   - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible
   - [ ] Warm the recognition model at startup (reduce cold-start delay)
-  - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion
+  - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion — **catch-all** on the
+        inbound subdomain (`*@in.<domain>`) so every hunter's personal address reaches the webhook
   - [ ] Secrets/config management; environment separation
 - **DoD (review against):** forwarding an email to the real address delivers an SMS in prod;
   no secrets in the repo; services scale to zero when idle.
@@ -250,6 +257,8 @@ then the async flow, then deploy, then scale.
 - **Deliverable:** a hunter-facing web app.
 - **Tasks:**
   - [ ] Hunter signup + phone verification
+  - [ ] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
+        or entering it directly in the camera app)
   - [ ] **Detection History service** (Kotlin/Spring Boot + Postgres): consume
         `AnimalRecognized`, store detections; reporting queries with **jOOQ** (codegen via
         `DDLDatabase` from Flyway SQL)
