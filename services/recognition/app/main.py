@@ -6,34 +6,17 @@ FastAPI entry point. The classifier is selected by config: a fake stub by defaul
 deps), or the real DeepFaune model when RECOGNITION_CLASSIFIER=deepfaune.
 """
 
-from functools import lru_cache
-
 from fastapi import Depends, FastAPI, UploadFile
 
 from app.classifier import (
     Classifier,
     RecognitionResult,
-    StubClassifier,
     apply_threshold,
+    get_classifier,
 )
 from app.config import Settings, get_settings
 
 app = FastAPI(title="WildAlert Recognition Service")
-
-
-@lru_cache
-def _load_deepfaune() -> Classifier:
-    """Loads the DeepFaune model once (weights load is expensive) and reuses it."""
-    from app.deepfaune import DeepFauneClassifier
-
-    return DeepFauneClassifier()
-
-
-def get_classifier() -> Classifier:
-    """Provides the configured classifier: the real DeepFaune model or the fake stub."""
-    if get_settings().classifier == "deepfaune":
-        return _load_deepfaune()
-    return StubClassifier()
 
 
 @app.get("/health")
