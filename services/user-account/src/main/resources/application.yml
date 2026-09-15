@@ -26,3 +26,8 @@ spring:
 
 server:
   port: 8081
+
+hunters:
+  # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
+  # Cloudflare Email Routing catch-all subdomain, e.g. in.wildalert.app.
+  inbound-domain: ${INBOUND_EMAIL_DOMAIN:in.wildalert.local}
