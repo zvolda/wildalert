@@ -1,0 +1,12 @@
+# Build context for the Kotlin service images (docker build -f services/<name>/Dockerfile .).
+# Keep it small and never send local secrets into a build.
+.env
+.env.*
+.git/
+.idea/
+.gradle/
+.kotlin/
+**/build/
+data/
+# Python service has its own image and build context (services/recognition).
+services/recognition/
