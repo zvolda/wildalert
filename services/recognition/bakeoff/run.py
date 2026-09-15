@@ -7,29 +7,31 @@ truth plus a top-1 accuracy summary. A first sanity read on real photos, not a v
 Usage (inside the container):  python /work/run.py /samples
 """
 
+import re
 import sys
 from pathlib import Path
 
 from PytorchWildlife.models.classification import DeepfauneClassifier
 
-# Map our short filename labels onto DeepFaune's English class names.
+# Map our filename labels onto DeepFaune's English class names.
 ALIASES = {
     "boar": "wild boar",
-    "wildboar": "wild boar",
     "sanglier": "wild boar",
-    "fox": "fox",
     "renard": "fox",
-    "deer": "red deer",
-    "reddeer": "red deer",
-    "roedeer": "roe deer",
 }
+
+# Species DeepFaune (European taxonomy) has no class for — can't be right by design.
+OUT_OF_TAXONOMY = {"white tail deer", "white tailed deer", "whitetail deer"}
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
 
 
 def true_label_from_filename(path: Path) -> str:
-    token = "".join(ch for ch in path.stem.lower() if ch.isalpha())
-    return ALIASES.get(token, token)
+    stem = path.stem.lower()
+    stem = re.sub(r"[_-]+", " ", stem)   # separators -> space
+    stem = re.sub(r"\d+", "", stem)      # drop digits: "boar2" -> "boar"
+    stem = re.sub(r"\s+", " ", stem).strip()
+    return ALIASES.get(stem, stem)
 
 
 def is_match(prediction: str, truth: str) -> bool:
@@ -47,19 +49,28 @@ def main(samples_dir: str) -> None:
     clf = DeepfauneClassifier(device="cpu", class_name_lang="en")
 
     correct = 0
+    scored = 0
     print()
-    print(f"{'file':<28} {'true':<12} {'prediction':<14} {'conf':>6}  ok")
-    print("-" * 72)
+    print(f"{'file':<24} {'true':<18} {'prediction':<14} {'conf':>6}  ok")
+    print("-" * 74)
     for img in images:
         truth = true_label_from_filename(img)
         res = clf.single_image_classification(str(img), img_id=img.name)
         pred, conf = res["prediction"], res["confidence"]
-        ok = is_match(pred, truth)
-        correct += int(ok)
-        print(f"{img.name:<28} {truth:<12} {pred:<14} {conf:>6.2f}  {'Y' if ok else '.'}")
+        if truth in OUT_OF_TAXONOMY:
+            mark = "n/a"  # DeepFaune has no European class for this species
+        else:
+            scored += 1
+            ok = is_match(pred, truth)
+            correct += int(ok)
+            mark = "Y" if ok else "."
+        print(f"{img.name:<24} {truth:<18} {pred:<14} {conf:>6.2f}  {mark}")
 
-    print("-" * 72)
-    print(f"DeepFaune top-1 accuracy: {correct}/{len(images)} = {correct / len(images):.0%}")
+    print("-" * 74)
+    pct = f"{correct / scored:.0%}" if scored else "n/a"
+    print(f"DeepFaune top-1 accuracy (in-taxonomy only): {correct}/{scored} = {pct}")
+    if scored != len(images):
+        print(f"({len(images) - scored} image(s) excluded as out-of-taxonomy for DeepFaune)")
 
 
 if __name__ == "__main__":
