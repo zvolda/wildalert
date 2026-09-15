@@ -38,8 +38,11 @@ events:
     image-received: ${IMAGE_RECEIVED_TOPIC:image.received}
 
 storage:
-  # 'logging' (fake, default) or 'r2'
+  # 'logging' (fake, default), 'filesystem' (local folder, readable by recognition) or 'r2'
   provider: ${STORAGE_PROVIDER:logging}
+  filesystem:
+    # Relative paths resolve against the working directory (the repo root for bootRun/tests).
+    root: ${STORAGE_FILESYSTEM_ROOT:data/images}
   r2:
     endpoint: ${R2_ENDPOINT:}
     bucket: ${R2_BUCKET:}

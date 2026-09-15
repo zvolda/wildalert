@@ -15,6 +15,32 @@ class Settings(BaseModel):
     # needs torch + PytorchWildlife, so only the container image sets this).
     classifier: str = "stub"
 
+    # Where stored images are read from: "local" (default — a folder shared with
+    # email-ingestion's filesystem store) or "r2" (Cloudflare R2).
+    image_source: str = "local"
+    # Folder for the local source. Must be the same folder email-ingestion writes to.
+    image_root: str = "data/images"
+
+    # Cloudflare R2 (S3 API) — same variable names email-ingestion uses.
+    r2_endpoint: str = ""
+    r2_bucket: str = ""
+    r2_access_key: str = ""
+    r2_secret_key: str = ""
+    r2_region: str = "auto"
+
+
+# Plain string settings and the environment variable each one is read from.
+_STRING_ENV_VARS = {
+    "classifier": "RECOGNITION_CLASSIFIER",
+    "image_source": "RECOGNITION_IMAGE_SOURCE",
+    "image_root": "RECOGNITION_IMAGE_ROOT",
+    "r2_endpoint": "R2_ENDPOINT",
+    "r2_bucket": "R2_BUCKET",
+    "r2_access_key": "R2_ACCESS_KEY",
+    "r2_secret_key": "R2_SECRET_KEY",
+    "r2_region": "R2_REGION",
+}
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -22,7 +48,8 @@ def get_settings() -> Settings:
     threshold = os.getenv("RECOGNITION_CONFIDENCE_THRESHOLD")
     if threshold is not None:
         kwargs["confidence_threshold"] = float(threshold)
-    classifier = os.getenv("RECOGNITION_CLASSIFIER")
-    if classifier:
-        kwargs["classifier"] = classifier
+    for field, env_var in _STRING_ENV_VARS.items():
+        value = os.getenv(env_var)
+        if value:
+            kwargs[field] = value
     return Settings(**kwargs)

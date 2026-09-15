@@ -1,11 +1,8 @@
-# Recognition Service (Python + SpeciesNet)
+# Recognition Service (Python + DeepFaune)
 
 Consumes stored trail-camera images and classifies the animal (species + confidence).
-Written in Python (SpeciesNet is Python); everything else in WildAlert is Kotlin. Lives
-outside the Gradle build. Runs on port **8084** locally.
-
-Currently this is the service skeleton with a `/health` check only — model inference is
-added in a later slice.
+Written in Python (DeepFaune / PyTorch-Wildlife are Python); everything else in WildAlert is
+Kotlin. Lives outside the Gradle build. Runs on port **8084** locally.
 
 ## Setup
 
@@ -33,6 +30,16 @@ uvicorn app.main:app --reload --port 8084
 
 - `RECOGNITION_CONFIDENCE_THRESHOLD` (default `0.7`) — results below this are flagged
   `low_confidence: true`, so we never assert a species we're unsure of.
+- `RECOGNITION_CLASSIFIER` (default `stub`) — `stub` (fake) or `deepfaune` (real model, Docker only).
+- `RECOGNITION_IMAGE_SOURCE` (default `local`) — where stored images are read from by storage key:
+  - `local` — reads `<RECOGNITION_IMAGE_ROOT>/<key>` (default root `data/images`). Point it at
+    the **same folder** email-ingestion writes to with `STORAGE_PROVIDER=filesystem`; its default
+    is `data/images` under the repo root, so from this directory use
+    `RECOGNITION_IMAGE_ROOT=../../data/images`.
+  - `r2` — Cloudflare R2 via boto3; needs `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY`,
+    `R2_SECRET_KEY` (optional `R2_REGION`, default `auto`) — the same names email-ingestion uses.
+
+This service reads real environment variables only (it does not load the repo's `.env`).
 
 ## Test
 

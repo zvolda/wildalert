@@ -36,9 +36,14 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
 ## In progress — Phase 5 (Kafka wiring)
 - **Slice 1 (done):** email-ingestion `KafkaEventPublisher` publishes `ImageReceived` (JSON)
   to topic `image.received`. Unit-tested; verified with a real broker round-trip.
+- **Slice 2 (done, pending review):** image fetch by storage key. email-ingestion
+  `FileSystemImageStore` (`storage.provider=filesystem`, writes `<root>/<key>`); recognition
+  `ImageSource` (`LocalFolderImageSource` / `R2ImageSource` via boto3, chosen by
+  `RECOGNITION_IMAGE_SOURCE`). Tested both sides; verified a key written by the running
+  email-ingestion app reads back byte-identical from Python.
 - **Remaining slices:**
-  1. Recognition consumer/producer (Python): consume `image.received` → DeepFaune →
-     publish `animal.recognized`.
+  1. Recognition consumer/producer (Python): transport-free `handle(event)` (fetch → DeepFaune →
+     threshold) + Kafka loop; consume `image.received` → publish `animal.recognized`.
   2. Notification consumer (Kotlin): consume `animal.recognized` → SMS policy → send SMS.
   3. Hardening: retries, dead-letter, idempotency (events already carry `eventId`).
 
