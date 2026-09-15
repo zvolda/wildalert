@@ -1,7 +1,8 @@
 # Container for the Python recognition service — runs the real DeepFaune model (CPU build).
 # Self-contained; build context is this service directory:
 #   docker build -t wildalert-recognition services/recognition
-#   docker run -p 8084:8084 wildalert-recognition
+#   docker run -p 8084:8084 wildalert-recognition             # HTTP API (/recognize)
+#   docker run wildalert-recognition python -m app.worker     # Kafka worker
 #
 # Python 3.12 (not 3.14): torch/PytorchWildlife have no 3.14 wheels yet. Local dev/tests run
 # the stub on the host Python; only this image runs the model.
@@ -22,15 +23,16 @@ WORKDIR /app
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir PytorchWildlife soundfile librosa
 
-# Service (FastAPI) deps.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Bake model weights into the image so the container starts fast (no cold-start download).
 RUN python -c "from PytorchWildlife.models.detection import MegaDetectorV6; \
 from PytorchWildlife.models.classification import DeepfauneClassifier; \
 MegaDetectorV6(device='cpu', pretrained=True, version='MDV6-yolov9-c'); \
 DeepfauneClassifier(device='cpu', class_name_lang='en')"
+
+# Service deps (FastAPI, boto3, confluent-kafka). Installed after the weights so changing them
+# doesn't invalidate the multi-GB torch + model-weight layers above.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code.
 COPY app ./app
