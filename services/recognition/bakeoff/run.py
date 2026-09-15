@@ -11,7 +11,10 @@ import re
 import sys
 from pathlib import Path
 
+import numpy as np
+from PIL import Image
 from PytorchWildlife.models.classification import DeepfauneClassifier
+from PytorchWildlife.models.detection import MegaDetectorV6
 
 # Map our filename labels onto DeepFaune's English class names.
 ALIASES = {
@@ -38,6 +41,24 @@ def is_match(prediction: str, truth: str) -> bool:
     return prediction == truth or truth in prediction or prediction in truth
 
 
+def best_animal_crop(detector: MegaDetectorV6, image_path: Path):
+    """Runs MegaDetector and returns (crop_ndarray, detection_confidence) for the highest-
+    confidence animal. Falls back to the whole image (conf None) when nothing is detected."""
+    res = detector.single_image_detection(str(image_path))
+    arr = np.array(Image.open(image_path).convert("RGB"))
+    dets = res.get("detections")
+    if dets is None or len(dets.xyxy) == 0:
+        return arr, None
+
+    i = int(np.argmax(dets.confidence))
+    x1, y1, x2, y2 = (int(round(v)) for v in dets.xyxy[i])
+    h, w = arr.shape[:2]
+    x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return arr, None
+    return arr[y1:y2, x1:x2], float(dets.confidence[i])
+
+
 def main(samples_dir: str) -> None:
     root = Path(samples_dir)
     images = sorted(p for p in root.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
@@ -45,18 +66,21 @@ def main(samples_dir: str) -> None:
         print(f"No images found under {root}")
         return
 
-    print("Loading DeepFaune classifier (downloads weights on first run)...")
+    print("Loading MegaDetector + DeepFaune classifier (downloads weights on first run)...")
+    detector = MegaDetectorV6(device="cpu", pretrained=True, version="MDV6-yolov9-c")
     clf = DeepfauneClassifier(device="cpu", class_name_lang="en")
 
     correct = 0
     scored = 0
     print()
-    print(f"{'file':<24} {'true':<18} {'prediction':<14} {'conf':>6}  ok")
-    print("-" * 74)
+    print(f"{'file':<24} {'true':<18} {'prediction':<14} {'conf':>6} {'det':>5}  ok")
+    print("-" * 80)
     for img in images:
         truth = true_label_from_filename(img)
-        res = clf.single_image_classification(str(img), img_id=img.name)
+        crop, det_conf = best_animal_crop(detector, img)
+        res = clf.single_image_classification(crop, img_id=img.name)
         pred, conf = res["prediction"], res["confidence"]
+        det_str = f"{det_conf:.2f}" if det_conf is not None else " none"
         if truth in OUT_OF_TAXONOMY:
             mark = "n/a"  # DeepFaune has no European class for this species
         else:
@@ -64,7 +88,7 @@ def main(samples_dir: str) -> None:
             ok = is_match(pred, truth)
             correct += int(ok)
             mark = "Y" if ok else "."
-        print(f"{img.name:<24} {truth:<18} {pred:<14} {conf:>6.2f}  {mark}")
+        print(f"{img.name:<24} {truth:<18} {pred:<14} {conf:>6.2f} {det_str:>5}  {mark}")
 
     print("-" * 74)
     pct = f"{correct / scored:.0%}" if scored else "n/a"
