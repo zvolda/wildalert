@@ -30,6 +30,9 @@ dependencies {
     implementation(platform("software.amazon.awssdk:bom:2.31.0"))
     implementation("software.amazon.awssdk:s3")
 
+    // Spring Kafka — publishes events to the broker when events.provider=kafka
+    implementation("org.springframework.kafka:spring-kafka")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 

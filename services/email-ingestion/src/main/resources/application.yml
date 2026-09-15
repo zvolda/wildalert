@@ -12,6 +12,13 @@ spring:
       max-request-size: 25MB
       max-file-size: 25MB
 
+  # Kafka — used only when events.provider=kafka. Host apps reach the compose broker on 29092.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
 server:
   port: 8083
   # Allow a larger raw email body (default is ~2MB).
@@ -25,8 +32,10 @@ services:
     base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
 
 events:
-  # 'logging' (fake, default) or 'kafka' (Phase 5)
+  # 'logging' (fake, default) or 'kafka'
   provider: ${EVENTS_PROVIDER:logging}
+  topic:
+    image-received: ${IMAGE_RECEIVED_TOPIC:image.received}
 
 storage:
   # 'logging' (fake, default) or 'r2'
