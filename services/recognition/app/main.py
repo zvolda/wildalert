@@ -1,9 +1,12 @@
 """WildAlert Recognition Service.
 
 Consumes stored trail-camera images and classifies the animal (species + confidence)
-using SpeciesNet. This module is the FastAPI entry point. Classification currently runs
-through a stub; a real model is wired in behind the Classifier interface in a later slice.
+using DeepFaune (see ../bakeoff for why DeepFaune over SpeciesNet). This module is the
+FastAPI entry point. The classifier is selected by config: a fake stub by default (no ML
+deps), or the real DeepFaune model when RECOGNITION_CLASSIFIER=deepfaune.
 """
+
+from functools import lru_cache
 
 from fastapi import Depends, FastAPI, UploadFile
 
@@ -18,8 +21,18 @@ from app.config import Settings, get_settings
 app = FastAPI(title="WildAlert Recognition Service")
 
 
+@lru_cache
+def _load_deepfaune() -> Classifier:
+    """Loads the DeepFaune model once (weights load is expensive) and reuses it."""
+    from app.deepfaune import DeepFauneClassifier
+
+    return DeepFauneClassifier()
+
+
 def get_classifier() -> Classifier:
-    """Provides the classifier implementation. Swap the stub for a real model here later."""
+    """Provides the configured classifier: the real DeepFaune model or the fake stub."""
+    if get_settings().classifier == "deepfaune":
+        return _load_deepfaune()
     return StubClassifier()
 
 
