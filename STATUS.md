@@ -36,16 +36,22 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
 ## In progress — Phase 5 (Kafka wiring)
 - **Slice 1 (done):** email-ingestion `KafkaEventPublisher` publishes `ImageReceived` (JSON)
   to topic `image.received`. Unit-tested; verified with a real broker round-trip.
-- **Slice 2 (done, pending review):** image fetch by storage key. email-ingestion
+- **Slice 2 (done):** image fetch by storage key. email-ingestion
   `FileSystemImageStore` (`storage.provider=filesystem`, writes `<root>/<key>`); recognition
   `ImageSource` (`LocalFolderImageSource` / `R2ImageSource` via boto3, chosen by
   `RECOGNITION_IMAGE_SOURCE`). Tested both sides; verified a key written by the running
   email-ingestion app reads back byte-identical from Python.
+- **Slice 3 (done, pending review):** recognition Kafka worker (`python -m app.worker`, same
+  image as the API). `events.py` (ImageReceived / AnimalRecognized contracts, camelCase JSON),
+  transport-free `handler.handle(event)`, `worker.py` Kafka adapter (confluent-kafka).
+  At-least-once: commit only after the result is delivered; invalid/missing-image messages
+  skipped; other failures stop without committing. Verified in WSL with the real DeepFaune
+  image + broker: boar → `wild boar` 1.00; mouflon → `fallow deer` 0.65 flagged
+  `lowConfidence` (threshold caught a misclassification); bad messages skipped; LAG 0; restart
+  reprocessed nothing.
 - **Remaining slices:**
-  1. Recognition consumer/producer (Python): transport-free `handle(event)` (fetch → DeepFaune →
-     threshold) + Kafka loop; consume `image.received` → publish `animal.recognized`.
-  2. Notification consumer (Kotlin): consume `animal.recognized` → SMS policy → send SMS.
-  3. Hardening: retries, dead-letter, idempotency (events already carry `eventId`).
+  1. Notification consumer (Kotlin): consume `animal.recognized` → SMS policy → send SMS.
+  2. Hardening: retries, dead-letter topic, idempotency on `sourceEventId`, outbox.
 
 ## Remaining phases
 - **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
