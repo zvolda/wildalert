@@ -5,9 +5,12 @@ stub and drop in a real model (SpeciesNet or DeepFaune) later without touching c
 same fake-first pattern the Kotlin services use (ImageStore, SmsSender, EventPublisher).
 """
 
+from functools import lru_cache
 from typing import Protocol
 
 from pydantic import BaseModel, Field
+
+from app.config import get_settings
 
 
 class Recognition(BaseModel):
@@ -45,3 +48,19 @@ class StubClassifier:
 
     def classify(self, image_bytes: bytes) -> Recognition:
         return Recognition(species="wild boar", confidence=0.97)
+
+
+@lru_cache
+def _load_deepfaune() -> Classifier:
+    """Loads the DeepFaune model once (weights load is expensive) and reuses it."""
+    from app.deepfaune import DeepFauneClassifier
+
+    return DeepFauneClassifier()
+
+
+def get_classifier() -> Classifier:
+    """Provides the configured classifier: the real DeepFaune model or the fake stub. Shared by
+    the HTTP API and the Kafka worker."""
+    if get_settings().classifier == "deepfaune":
+        return _load_deepfaune()
+    return StubClassifier()
