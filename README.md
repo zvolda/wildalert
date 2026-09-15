@@ -2,19 +2,23 @@
 
 Recognize animals in trail-camera photos forwarded by email, and text the hunter the
 result. Kotlin + Spring Boot microservices, event-driven, with a Python recognition
-service. See [`ROADMAP.md`](./ROADMAP.md) for the full plan and phase-by-phase build.
+service.
+
+- [`ROADMAP.md`](./ROADMAP.md) — the full plan and phase-by-phase build.
+- [`STATUS.md`](./STATUS.md) — current progress: what's done, in progress, and next.
 
 ## Repository layout
 
 ```
 services/
-  user-account/     # Kotlin/Spring Boot — hunters, email→phone mapping (Phase 1)
-  ...               # more services added as we build them
+  user-account/     # Kotlin/Spring Boot — hunters, email→phone mapping
+  notification/     # Kotlin/Spring Boot — sends SMS via Twilio
+  email-ingestion/  # Kotlin/Spring Boot — parse email, store image, emit ImageReceived
+  recognition/      # Python/FastAPI — classifies the animal (DeepFaune)
 compose.yml         # local dev infra: Postgres + Kafka + Kafka UI
 ```
 
-The recognition service (Python + SpeciesNet) is added later and lives outside the
-Gradle build.
+The recognition service (Python + DeepFaune) lives outside the Gradle build.
 
 ## Prerequisites
 
