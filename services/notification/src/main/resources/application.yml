@@ -6,8 +6,30 @@ spring:
   config:
     import: optional:file:.env[.properties]
 
+  # Kafka — used only when events.provider=kafka. Host apps reach the compose broker on 29092.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      # All notification replicas share this group, so each event is handled by one of them.
+      group-id: ${NOTIFICATION_CONSUMER_GROUP:notification}
+      # A brand-new group starts from the oldest unprocessed events, not only new ones.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
 server:
   port: 8082
+
+services:
+  # Base URL of the user-account service, used to look up the hunter's phone number.
+  user-account:
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+
+events:
+  # 'none' (default — no consumer, the app runs without a broker) or 'kafka'
+  provider: ${EVENTS_PROVIDER:none}
+  topic:
+    animal-recognized: ${ANIMAL_RECOGNIZED_TOPIC:animal.recognized}
 
 sms:
   # 'logging' (fake, default) or 'twilio'
