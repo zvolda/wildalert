@@ -27,8 +27,8 @@ Key realities established during planning:
 | Area | Decision | Why |
 |---|---|---|
 | Language / framework | **Kotlin + Spring Boot** | Learning goal; industry standard, job-marketable |
-| Recognition model | **Google SpeciesNet** (MegaDetector + EfficientNetV2), **cloud-hosted** as a container | Purpose-built for trail-cam IR/night photos; 2000+ species; no per-image fee; scales by replicas |
-| Recognition language | **Python** microservice (polyglot is normal for microservices) | SpeciesNet is Python; everything else stays Kotlin |
+| Recognition model | **DeepFaune** (MegaDetector V6 finds the animal → crop → DeepFaune classifies), via PyTorch-Wildlife, **cloud-hosted** as a container | Trained on European camera-trap species; won a bake-off on real photos (specific species, where SpeciesNet gave vague families / global bias); free & open, no per-image fee; scales by replicas |
+| Recognition language | **Python** microservice (polyglot is normal for microservices) | DeepFaune / PyTorch-Wildlife are Python; everything else stays Kotlin |
 | Precision safeguard | **Confidence threshold** — if unsure, send "low confidence" instead of guessing | Need correct results, not wild guesses |
 | Email in | **Cloudflare Email Routing → webhook** | Free, unlimited forwarding |
 | SMS out | **Twilio** (abstracted so it can be swapped for Plivo/Vonage), **free EU alphanumeric sender ID** | Best docs for learning; no monthly phone-number fee in EU |
@@ -90,7 +90,7 @@ Key realities established during planning:
                                          [ Broker: Kafka ]
                                               |
                                               v
-                                         (2) Recognition Service      (Python + SpeciesNet)
+                                         (2) Recognition Service      (Python + DeepFaune)
                                               | classifies species + confidence
                                               | publishes event: AnimalRecognized
                                               v
@@ -107,7 +107,7 @@ Key realities established during planning:
 
 **Services:**
 1. **Email Ingestion** (Kotlin) — receive webhook, extract attachment + sender, store image, emit `ImageReceived`.
-2. **Recognition** (Python/SpeciesNet) — consume `ImageReceived`, classify, emit `AnimalRecognized{species, confidence}`.
+2. **Recognition** (Python/DeepFaune) — consume `ImageReceived`, classify, emit `AnimalRecognized{species, confidence}`.
 3. **Notification** (Kotlin) — consume `AnimalRecognized`, look up phone, apply SMS policy, send SMS.
 4. **User/Account** (Kotlin) — hunters, email→phone mapping, subscription/plan; API for the future React app.
 5. **Detection History** (Kotlin, later — Phase 8) — stores every `AnimalRecognized`; jOOQ queries for the dashboard.
@@ -186,11 +186,12 @@ then the async flow, then deploy, then scale.
 - **DoD (review against):** forwarding a real email stores the photo in R2 and publishes a
   valid `ImageReceived` event; unknown senders handled gracefully; malformed emails don't crash it.
 
-### Phase 4 — Recognition Service (Python + SpeciesNet, cloud CPU)
+### Phase 4 — Recognition Service (Python + DeepFaune, cloud CPU)
 - **Goal / learn:** a polyglot microservice; running an ML model; confidence handling.
 - **Deliverable:** a service that classifies a stored image into species + confidence.
 - **Tasks:**
-  - [ ] Python service wrapping SpeciesNet (MegaDetector + classifier)
+  - [ ] Bake-off of candidate models on real photos (SpeciesNet vs. DeepFaune → DeepFaune chosen)
+  - [ ] Python service wrapping DeepFaune behind a `Classifier` interface (MegaDetector → crop → DeepFaune)
   - [ ] Load model; inference on a stored image → species + confidence
   - [ ] Containerize (CPU build; document GPU path for later)
   - [ ] Consume `ImageReceived`, emit `AnimalRecognized{species, confidence}`
@@ -292,7 +293,7 @@ then the async flow, then deploy, then scale.
 
 - **Per service:** unit + integration tests (Testcontainers for Postgres/Kafka, via the
   WSL2 Docker Engine socket).
-- **Recognition accuracy:** run SpeciesNet against a folder of real B/W night trail-cam
+- **Recognition accuracy:** run DeepFaune against a folder of real B/W night trail-cam
   photos; confirm correct species above the confidence threshold.
 - **End-to-end:** forward a real email with a photo attachment → confirm an SMS arrives
   with the correct animal name (or "low confidence" when appropriate).
