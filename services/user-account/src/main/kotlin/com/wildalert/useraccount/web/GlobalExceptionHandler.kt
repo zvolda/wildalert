@@ -2,6 +2,7 @@ package com.wildalert.useraccount.web
 
 import com.wildalert.useraccount.hunter.DuplicateEmailException
 import com.wildalert.useraccount.hunter.HunterNotFoundByEmailException
+import com.wildalert.useraccount.hunter.HunterNotFoundByInboundAddressException
 import com.wildalert.useraccount.hunter.HunterNotFoundException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
@@ -16,7 +17,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 @RestControllerAdvice
 class GlobalExceptionHandler {
 
-    @ExceptionHandler(HunterNotFoundException::class, HunterNotFoundByEmailException::class)
+    @ExceptionHandler(
+        HunterNotFoundException::class,
+        HunterNotFoundByEmailException::class,
+        HunterNotFoundByInboundAddressException::class,
+    )
     fun handleNotFound(ex: RuntimeException): ProblemDetail =
         ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.message ?: "Not found")
 

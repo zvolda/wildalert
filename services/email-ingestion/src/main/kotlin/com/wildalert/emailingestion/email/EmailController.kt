@@ -8,6 +8,7 @@ import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
@@ -20,14 +21,27 @@ class EmailController(
 ) {
 
     /**
-     * Receives a raw forwarded email (RFC-822 bytes), matches the sender to a hunter, then for
+     * Receives a raw trail-cam email (RFC-822 bytes), matches it to a hunter by recipient, then for
      * each image attachment stores it and publishes an ImageReceived event. Returns a summary.
-     * Unknown senders are fine: the response and events just carry a null hunter id.
+     *
+     * The hunter is identified by their personal inbound address, never by `From`: forwarding rules
+     * keep the camera's address there, and it is trivially spoofed. [envelopeTo] is the SMTP
+     * envelope recipient the email-routing webhook passes along (the most reliable source); after
+     * it, the email's own recipient headers are tried. Unmatched emails are fine: the response and
+     * events just carry a null hunter id.
      */
     @PostMapping(consumes = [MediaType.ALL_VALUE])
-    fun receive(@RequestBody raw: ByteArray): EmailSummary {
+    fun receive(
+        @RequestBody raw: ByteArray,
+        @RequestParam(required = false) envelopeTo: String?,
+    ): EmailSummary {
         val email = parser.parse(raw)
-        val matchedHunterId = email.from?.let { hunterLookup.findByEmail(it)?.id }
+        val candidates = (listOfNotNull(envelopeTo?.trim()?.takeIf { it.isNotEmpty() }) + email.recipients)
+            .distinctBy { it.lowercase() }
+        val match = candidates.firstNotNullOfOrNull { address ->
+            hunterLookup.findByInboundAddress(address)?.let { hunter -> address to hunter.id }
+        }
+        val matchedHunterId = match?.second
         val images = email.images.map { image ->
             val stored = imageStore.store(image.bytes, image.contentType, image.filename)
             eventPublisher.publish(
@@ -43,6 +57,7 @@ class EmailController(
         return EmailSummary(
             from = email.from,
             subject = email.subject,
+            matchedRecipient = match?.first,
             matchedHunterId = matchedHunterId,
             imageCount = images.size,
             images = images,

@@ -14,7 +14,9 @@ data class ImageInfo(
 data class EmailSummary(
     val from: String?,
     val subject: String?,
-    // Which registered hunter the sender matched, or null if the sender is unknown.
+    // The recipient address that identified the hunter, or null if none matched.
+    val matchedRecipient: String?,
+    // Which registered hunter the email belongs to, or null if no recipient matched.
     val matchedHunterId: UUID?,
     val imageCount: Int,
     val images: List<ImageInfo>,

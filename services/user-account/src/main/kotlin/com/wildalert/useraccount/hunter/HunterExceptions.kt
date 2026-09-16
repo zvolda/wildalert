@@ -10,6 +10,10 @@ class HunterNotFoundException(id: UUID) :
 class HunterNotFoundByEmailException(email: String) :
     RuntimeException("Hunter not found for email: $email")
 
+/** Thrown when no hunter owns the given inbound address → mapped to HTTP 404. */
+class HunterNotFoundByInboundAddressException(address: String) :
+    RuntimeException("Hunter not found for inbound address: $address")
+
 /** Thrown when registering an email that's already taken → mapped to HTTP 409. */
 class DuplicateEmailException(email: String) :
     RuntimeException("A hunter with email '$email' already exists")

@@ -15,7 +15,7 @@ import java.util.UUID
 class HunterServiceTest {
 
     private val repository = mock(HunterRepository::class.java)
-    private val service = HunterService(repository)
+    private val service = HunterService(repository, InboundAddresses("in.wildalert.test"))
 
     @Test
     fun `register saves a new hunter when the email is free`() {
@@ -29,7 +29,35 @@ class HunterServiceTest {
         assertThat(result.email).isEqualTo("hunter@example.com")
         assertThat(result.phone).isEqualTo("+420123456789")
         assertThat(result.plan).isEqualTo(Plan.PRO)
+        assertThat(result.inboundToken).hasSize(12)
         then(repository).should().save(any(Hunter::class.java))
+    }
+
+    @Test
+    fun `getByInboundAddress finds the hunter by the token in the address`() {
+        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE)
+        given(repository.findByInboundToken("7f3k9qabcdef")).willReturn(existing)
+
+        val result = service.getByInboundAddress(" 7F3K9QABCDEF@in.wildalert.test")
+
+        assertThat(result).isSameAs(existing)
+    }
+
+    @Test
+    fun `getByInboundAddress throws when no hunter owns the token`() {
+        given(repository.findByInboundToken("7f3k9qabcdef")).willReturn(null)
+
+        assertThrows<HunterNotFoundByInboundAddressException> {
+            service.getByInboundAddress("7f3k9qabcdef@in.wildalert.test")
+        }
+    }
+
+    @Test
+    fun `getByInboundAddress never queries for an address on another domain`() {
+        assertThrows<HunterNotFoundByInboundAddressException> {
+            service.getByInboundAddress("hunter@gmail.com")
+        }
+        then(repository).shouldHaveNoInteractions()
     }
 
     @Test

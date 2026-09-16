@@ -1,6 +1,7 @@
 package com.wildalert.emailingestion.email
 
 import jakarta.activation.DataHandler
+import jakarta.mail.Message
 import jakarta.mail.Part
 import jakarta.mail.Session
 import jakarta.mail.internet.InternetAddress
@@ -24,9 +25,13 @@ object TestEmails {
         from: String = "hunter@example.com",
         subject: String = "Trail cam photo",
         filename: String = "boar.png",
+        to: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): ByteArray {
         val message = MimeMessage(Session.getDefaultInstance(Properties()))
         message.setFrom(InternetAddress(from))
+        to?.let { message.setRecipients(Message.RecipientType.TO, it) }
+        headers.forEach { (name, value) -> message.addHeader(name, value) }
         message.subject = subject
 
         val text = MimeBodyPart().apply { setText("A new photo from the field.") }

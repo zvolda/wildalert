@@ -24,24 +24,24 @@ class HunterLookupClientTest {
     private val client = HunterLookupClient(builder, "http://user-account")
 
     @Test
-    fun `findByEmail returns the hunter when user-account responds 200`() {
+    fun `findByInboundAddress returns the hunter when user-account responds 200`() {
         val id = UUID.randomUUID()
-        server.expect(requestTo("http://user-account/api/hunters/by-email?email=hunter@example.com"))
+        server.expect(requestTo("http://user-account/api/hunters/by-inbound-address?address=7f3k9qabcdef@in.wildalert.local"))
             .andExpect(method(HttpMethod.GET))
-            .andRespond(withSuccess("""{"id":"$id"}""", MediaType.APPLICATION_JSON))
+            .andRespond(withSuccess("""{"id":"$id","email":"hunter@example.com"}""", MediaType.APPLICATION_JSON))
 
-        val result = client.findByEmail("hunter@example.com")
+        val result = client.findByInboundAddress("7f3k9qabcdef@in.wildalert.local")
 
         assertThat(result).isEqualTo(HunterRef(id))
         server.verify()
     }
 
     @Test
-    fun `findByEmail returns null when user-account responds 404`() {
-        server.expect(requestTo("http://user-account/api/hunters/by-email?email=nobody@example.com"))
+    fun `findByInboundAddress returns null when user-account responds 404`() {
+        server.expect(requestTo("http://user-account/api/hunters/by-inbound-address?address=hunter@gmail.com"))
             .andRespond(withStatus(HttpStatus.NOT_FOUND))
 
-        val result = client.findByEmail("nobody@example.com")
+        val result = client.findByInboundAddress("hunter@gmail.com")
 
         assertThat(result).isNull()
         server.verify()

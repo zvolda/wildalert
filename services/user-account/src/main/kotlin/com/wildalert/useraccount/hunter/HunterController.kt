@@ -18,18 +18,19 @@ import java.util.UUID
 @RequestMapping("/api/hunters")
 class HunterController(
     private val service: HunterService,
+    private val inboundAddresses: InboundAddresses,
 ) {
 
     /** Register a new hunter. Returns 201 Created with the stored record. */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun register(@Valid @RequestBody request: RegisterHunterRequest): HunterResponse =
-        HunterResponse.from(service.register(request))
+        response(service.register(request))
 
     /** Fetch a hunter by id. Returns 404 if it doesn't exist. */
     @GetMapping("/{id}")
     fun getById(@PathVariable id: UUID): HunterResponse =
-        HunterResponse.from(service.getById(id))
+        response(service.getById(id))
 
     /**
      * Look up a hunter by email address, so other services (e.g. email-ingestion) can match a
@@ -38,7 +39,15 @@ class HunterController(
      */
     @GetMapping("/by-email")
     fun getByEmail(@RequestParam email: String): HunterResponse =
-        HunterResponse.from(service.getByEmail(email))
+        response(service.getByEmail(email))
+
+    /**
+     * Look up the hunter who owns a personal inbound address, so email-ingestion can match a
+     * trail-cam email by its recipient. Returns 404 for any address that isn't a hunter's.
+     */
+    @GetMapping("/by-inbound-address")
+    fun getByInboundAddress(@RequestParam address: String): HunterResponse =
+        response(service.getByInboundAddress(address))
 
     /** Update phone / plan / active. Returns the updated record. */
     @PutMapping("/{id}")
@@ -46,5 +55,7 @@ class HunterController(
         @PathVariable id: UUID,
         @Valid @RequestBody request: UpdateHunterRequest,
     ): HunterResponse =
-        HunterResponse.from(service.update(id, request))
+        response(service.update(id, request))
+
+    private fun response(hunter: Hunter) = HunterResponse.from(hunter, inboundAddresses.addressFor(hunter))
 }

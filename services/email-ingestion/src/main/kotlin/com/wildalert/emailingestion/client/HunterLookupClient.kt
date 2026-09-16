@@ -13,9 +13,9 @@ data class HunterRef(
 )
 
 /**
- * Calls the user-account service to match an email sender to a hunter. Uses Spring's
- * RestClient (synchronous). An unknown sender is a normal outcome, not an error, so a
- * 404 from user-account maps to null rather than throwing.
+ * Calls the user-account service to match an email to a hunter by the hunter's personal inbound
+ * address (the email's recipient). Uses Spring's RestClient (synchronous). An address that isn't a
+ * hunter's is a normal outcome, not an error, so a 404 from user-account maps to null.
  */
 @Component
 class HunterLookupClient(
@@ -26,15 +26,15 @@ class HunterLookupClient(
     private val log = LoggerFactory.getLogger(javaClass)
     private val restClient = builder.baseUrl(baseUrl).build()
 
-    /** Returns the matching hunter, or null if no hunter is registered with that email. */
-    fun findByEmail(email: String): HunterRef? =
+    /** Returns the hunter who owns this inbound address, or null if it isn't a hunter's. */
+    fun findByInboundAddress(address: String): HunterRef? =
         try {
             restClient.get()
-                .uri { uri -> uri.path("/api/hunters/by-email").queryParam("email", email).build() }
+                .uri { uri -> uri.path("/api/hunters/by-inbound-address").queryParam("address", address).build() }
                 .retrieve()
                 .body(HunterRef::class.java)
         } catch (ex: HttpClientErrorException.NotFound) {
-            log.debug("No hunter registered for sender {}", email)
+            log.debug("No hunter owns inbound address {}", address)
             null
         }
 }

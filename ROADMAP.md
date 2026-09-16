@@ -214,10 +214,11 @@ then the async flow, then deploy, then scale.
   - [ ] End-to-end: forwarded email → recognized → SMS delivered
   - [ ] **Per-hunter inbound address** (e.g. `jan-7f3k9q@in.wildalert.app`): match the hunter by
         the email's **recipient**, not its `From` header — auto-forwarding rules keep the camera's
-        address in `From`, and cameras can email us directly. user-account: `inbound_address`
-        column (Flyway), generated on register, `GET /api/hunters/by-inbound-address`;
-        email-ingestion: read the recipient (`To`/`Delivered-To`, or the envelope recipient the
-        webhook passes) and look up by it. Keep `From` matching as a fallback or drop it.
+        address in `From`, and cameras can email us directly. user-account: `inbound_token`
+        column (Flyway V2; address = token@`INBOUND_EMAIL_DOMAIN`), generated on register,
+        `GET /api/hunters/by-inbound-address`; email-ingestion: match the envelope recipient
+        (`?envelopeTo=` from the webhook), then `Delivered-To`/`X-Original-To`/`To`/`Cc`.
+        `From` matching dropped (spoofable).
   - [ ] Retries + dead-letter handling for failures
   - [ ] Idempotency (don't double-SMS on redelivery)
   - [ ] **Transactional outbox** (Postgres) so a DB write and its event can't diverge

@@ -33,6 +33,12 @@ class Hunter(
     @Column(nullable = false)
     var active: Boolean = true,
 ) {
+    // Identifies the hunter's personal inbound address (<token>@<inbound domain>). Generated for new
+    // hunters and never changed, so an address set up in a forwarding rule or camera keeps working.
+    @Column(name = "inbound_token", nullable = false, unique = true, updatable = false)
+    var inboundToken: String = InboundAddresses.newToken()
+        protected set
+
     // Hibernate generates the UUID on insert; null until the row is first saved.
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

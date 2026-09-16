@@ -10,4 +10,5 @@ import java.util.UUID
 interface HunterRepository : JpaRepository<Hunter, UUID> {
     fun findByEmail(email: String): Hunter?
     fun existsByEmail(email: String): Boolean
+    fun findByInboundToken(inboundToken: String): Hunter?
 }

@@ -39,16 +39,19 @@ data class HunterResponse(
     val phone: String,
     val plan: Plan,
     val active: Boolean,
+    // Where the hunter forwards trail-cam emails (or points the camera).
+    val inboundAddress: String,
     val createdAt: Instant,
     val updatedAt: Instant,
 ) {
     companion object {
-        fun from(h: Hunter) = HunterResponse(
+        fun from(h: Hunter, inboundAddress: String) = HunterResponse(
             id = h.id!!,
             email = h.email,
             phone = h.phone,
             plan = h.plan,
             active = h.active,
+            inboundAddress = inboundAddress,
             createdAt = h.createdAt!!,
             updatedAt = h.updatedAt!!,
         )

@@ -5,6 +5,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.willThrow
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
+import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.util.ReflectionTestUtils
@@ -18,6 +19,7 @@ import java.util.UUID
 
 /** Tests the HTTP layer only: routing, JSON, validation, error mapping. Service is mocked. */
 @WebMvcTest(HunterController::class)
+@Import(InboundAddresses::class)
 class HunterControllerTest {
 
     @Autowired
@@ -38,6 +40,28 @@ class HunterControllerTest {
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.id").value(id.toString()))
             .andExpect(jsonPath("$.email").value("hunter@example.com"))
+            // Default domain from application.yml (INBOUND_EMAIL_DOMAIN unset).
+            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@in.wildalert.local"))
+    }
+
+    @Test
+    fun `GET by-inbound-address returns the hunter who owns the address`() {
+        val id = UUID.randomUUID()
+        given(service.getByInboundAddress("7f3k9qabcdef@in.wildalert.local")).willReturn(sampleHunter(id))
+
+        mockMvc.perform(get("/api/hunters/by-inbound-address").param("address", "7f3k9qabcdef@in.wildalert.local"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.id").value(id.toString()))
+            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@in.wildalert.local"))
+    }
+
+    @Test
+    fun `GET by-inbound-address returns 404 for an address that is not a hunter's`() {
+        willThrow(HunterNotFoundByInboundAddressException("hunter@gmail.com"))
+            .given(service).getByInboundAddress("hunter@gmail.com")
+
+        mockMvc.perform(get("/api/hunters/by-inbound-address").param("address", "hunter@gmail.com"))
+            .andExpect(status().isNotFound)
     }
 
     @Test
@@ -85,6 +109,7 @@ class HunterControllerTest {
         val hunter = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
         // id and timestamps are normally set by Hibernate; set them here for the response.
         ReflectionTestUtils.setField(hunter, "id", id)
+        ReflectionTestUtils.setField(hunter, "inboundToken", "7f3k9qabcdef")
         ReflectionTestUtils.setField(hunter, "createdAt", Instant.now())
         ReflectionTestUtils.setField(hunter, "updatedAt", Instant.now())
         return hunter

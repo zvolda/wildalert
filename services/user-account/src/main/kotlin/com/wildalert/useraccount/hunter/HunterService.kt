@@ -11,6 +11,7 @@ import java.util.UUID
 @Service
 class HunterService(
     private val repository: HunterRepository,
+    private val inboundAddresses: InboundAddresses,
 ) {
 
     @Transactional
@@ -35,6 +36,14 @@ class HunterService(
     fun getByEmail(email: String): Hunter {
         val normalized = normalizeEmail(email)
         return repository.findByEmail(normalized) ?: throw HunterNotFoundByEmailException(normalized)
+    }
+
+    /** The hunter whose personal inbound address this is (the recipient of a trail-cam email). */
+    @Transactional(readOnly = true)
+    fun getByInboundAddress(address: String): Hunter {
+        val token = inboundAddresses.tokenOf(address)
+        return token?.let { repository.findByInboundToken(it) }
+            ?: throw HunterNotFoundByInboundAddressException(address.trim())
     }
 
     /**

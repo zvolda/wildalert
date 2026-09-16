@@ -58,11 +58,20 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   error handler, then skipped). Added `services/notification/Dockerfile` + root `.dockerignore`.
   Verified full chain in WSL (ImageReceived → DeepFaune worker → notification → fake SMS) with
   real user-account + Postgres: all 6 cases correct, LAG 0.
+- **Slice 5 (done, pending review):** per-hunter inbound address. user-account: Flyway V2
+  `inbound_token` (backfilled for existing hunters), `InboundAddresses` (token@
+  `INBOUND_EMAIL_DOMAIN`, 12 unambiguous chars), `inboundAddress` in responses,
+  `GET /api/hunters/by-inbound-address`. email-ingestion: matches the hunter by recipient —
+  `?envelopeTo=` (webhook), then `Delivered-To`/`X-Original-To`/`To`/`Cc`; `From` matching
+  dropped (spoofable); `matchedRecipient` in the response; added `Dockerfile`.
+  **Verified true end-to-end from raw emails in WSL** (email-ingestion → filesystem + Kafka →
+  DeepFaune worker → notification → fake SMS): auto-forwarded email (From camera, To hunter's
+  Gmail, Delivered-To inbound) → SMS "wild boar"; camera-direct via envelopeTo → hedged SMS;
+  spoofed From → no match, no SMS. Migration applied to a DB with existing hunters: all got
+  distinct tokens.
 - **Remaining slices:**
   1. Hardening: idempotency on `sourceEventId` (no double SMS on redelivery), retries +
      dead-letter topics, outbox.
-  2. True end-to-end from a raw email: email-ingestion container (Dockerfile) with
-     `STORAGE_PROVIDER=filesystem` + `EVENTS_PROVIDER=kafka` sharing the image volume.
 
 ## Remaining phases
 - **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
@@ -84,14 +93,12 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
-- **Hunter matching by `From` header breaks real forwarding — fix before launch:**
-  email-ingestion matches only the email's `From` address (`EmailParser`). Automatic forwarding
-  rules (Gmail/Outlook) usually keep the camera service's address in `From`, and cameras can
-  email us directly, so most real photos would arrive as "unknown sender" → no SMS. Also misses
-  aliases / a different forwarding address. **Planned fix:** a personal inbound address per
-  hunter (e.g. `jan-7f3k9q@in.wildalert.app`, Cloudflare Email Routing catch-all) and match on
-  the **recipient** instead: new `inbound_address` column + lookup endpoint in user-account,
-  recipient-based matching in email-ingestion. See ROADMAP Phase 5.
+- **Inbound email webhook not built yet:** matching by recipient is done (slice 5), but the real
+  Cloudflare Email Routing → webhook (an Email Worker that POSTs the raw email with
+  `?envelopeTo=<message.to>`) comes with deploy (Phase 6). Check there which headers Cloudflare
+  actually adds; `envelopeTo` is the reliable path.
+- **user-account `contextLoads` test needs a real Postgres** (fails on the Windows host, which
+  can't reach WSL Docker); unit/web tests don't.
 - **`HunterLookupClient` resilience:** only catches 404; if user-account is down, the
   ingestion webhook 500s and no event is created. Fix = also catch connection errors → treat
   as no-match (degrade gracefully). _Not yet done._
