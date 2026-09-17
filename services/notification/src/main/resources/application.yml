@@ -17,6 +17,17 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
+  # Only used when idempotency.store=postgres (see PostgresIdempotencyConfig).
+  datasource:
+    url: ${DATABASE_URL:}
+    username: ${POSTGRES_USER:}
+    password: ${POSTGRES_PASSWORD:}
+
+  # This service owns its own schema; user-account keeps the public one (separate Flyway history).
+  flyway:
+    schemas: notification
+    create-schemas: true
+
 server:
   port: 8082
 
@@ -30,6 +41,11 @@ events:
   provider: ${EVENTS_PROVIDER:none}
   topic:
     animal-recognized: ${ANIMAL_RECOGNIZED_TOPIC:animal.recognized}
+
+idempotency:
+  # Where handled events are remembered so a redelivery can't send a second SMS:
+  # 'memory' (fake, default — per-instance, lost on restart) or 'postgres' (shared, durable).
+  store: ${IDEMPOTENCY_STORE:memory}
 
 sms:
   # 'logging' (fake, default) or 'twilio'

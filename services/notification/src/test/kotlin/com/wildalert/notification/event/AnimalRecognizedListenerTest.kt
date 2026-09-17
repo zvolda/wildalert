@@ -3,6 +3,7 @@ package com.wildalert.notification.event
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.wildalert.notification.alert.NotificationService
 import com.wildalert.notification.hunter.HunterClient
+import com.wildalert.notification.idempotency.InMemoryProcessedEvents
 import com.wildalert.notification.sms.SmsSender
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -19,7 +20,11 @@ class AnimalRecognizedListenerTest {
     /** Records the events it is asked to notify about. (Mockito captors return null for Kotlin
      *  non-null parameters, so a small fake is simpler.) */
     private class RecordingNotificationService :
-        NotificationService(mock(HunterClient::class.java), mock(SmsSender::class.java)) {
+        NotificationService(
+            mock(HunterClient::class.java),
+            mock(SmsSender::class.java),
+            InMemoryProcessedEvents(),
+        ) {
         val received = mutableListOf<AnimalRecognized>()
         override fun notify(event: AnimalRecognized) {
             received.add(event)

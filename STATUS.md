@@ -58,7 +58,7 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   error handler, then skipped). Added `services/notification/Dockerfile` + root `.dockerignore`.
   Verified full chain in WSL (ImageReceived → DeepFaune worker → notification → fake SMS) with
   real user-account + Postgres: all 6 cases correct, LAG 0.
-- **Slice 5 (done, pending review):** per-hunter inbound address. user-account: Flyway V2
+- **Slice 5 (done):** per-hunter inbound address. user-account: Flyway V2
   `inbound_token` (backfilled for existing hunters), `InboundAddresses` (token@
   `INBOUND_EMAIL_DOMAIN`, 12 unambiguous chars), `inboundAddress` in responses,
   `GET /api/hunters/by-inbound-address`. email-ingestion: matches the hunter by recipient —
@@ -69,9 +69,15 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   Gmail, Delivered-To inbound) → SMS "wild boar"; camera-direct via envelopeTo → hedged SMS;
   spoofed From → no match, no SMS. Migration applied to a DB with existing hunters: all got
   distinct tokens.
+- **Slice 6 (done, pending review):** no double SMS on redelivery. notification gained a
+  `ProcessedEvents` interface — `InMemoryProcessedEvents` (fake default, per-instance) and
+  `PostgresProcessedEvents` (`IDEMPOTENCY_STORE=postgres`, Flyway V1 `notification.processed_event`
+  in its own schema so it doesn't clash with user-account's Flyway history). `NotificationService`
+  **claims** `sourceEventId` before sending (`insert … on conflict do nothing`, so racing replicas
+  can't both send) and **releases** it if the send throws, so a failed send is still retried.
+  `DataSourceAutoConfiguration` is excluded, so the service still starts with no database.
 - **Remaining slices:**
-  1. Hardening: idempotency on `sourceEventId` (no double SMS on redelivery), retries +
-     dead-letter topics, outbox.
+  1. Retries + dead-letter topics for messages that keep failing (both consumers).
 
 ## Remaining phases
 - **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
@@ -97,8 +103,8 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   Cloudflare Email Routing → webhook (an Email Worker that POSTs the raw email with
   `?envelopeTo=<message.to>`) comes with deploy (Phase 6). Check there which headers Cloudflare
   actually adds; `envelopeTo` is the reliable path.
-- **user-account `contextLoads` test needs a real Postgres** (fails on the Windows host, which
-  can't reach WSL Docker); unit/web tests don't.
+- **user-account `contextLoads` test needs Postgres running** (`docker compose up -d postgres`);
+  unit/web tests don't. It passes from the Windows host once the container is up.
 - **`HunterLookupClient` resilience:** only catches 404; if user-account is down, the
   ingestion webhook 500s and no event is created. Fix = also catch connection errors → treat
   as no-match (degrade gracefully). _Not yet done._
@@ -110,10 +116,10 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   accuracy check. DeepFaune weights are **CC BY-SA 4.0** per the loader header (commercial use
   OK with attribution to CNRS/DeepFaune; confirm on deepfaune.cnrs.fr). Not legal advice — get a
   licensing check before launch.
-- **Local-dev env limits (this machine):** WSL2 shuts the distro down between commands
-  (kills containers), and the Windows host can't reach WSL2 Docker ports — so Windows-JVM
-  apps/Testcontainers can't hit WSL Kafka/Postgres. Verify integration inside WSL;
-  deployment is unaffected. Local fix: WSL `networkingMode=mirrored`.
+- **Local-dev env limit (this machine):** WSL2 shuts the distro down between commands, killing
+  running containers — do multi-step Docker work in one session. Port reachability is **not** a
+  problem: the Windows host reaches WSL2 Docker ports fine (corrected 2026-09-17), so
+  Testcontainers / host-run integration tests are worth trying.
 
 ## Tech stack
 Kotlin + Spring Boot (Web, JPA, Flyway, Validation, Spring Kafka, RestClient), JDK 25 ·

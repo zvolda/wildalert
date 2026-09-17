@@ -30,6 +30,13 @@ dependencies {
     // Spring Kafka — consumes AnimalRecognized events when events.provider=kafka
     implementation("org.springframework.kafka:spring-kafka")
 
+    // Postgres — remembers handled events so a redelivery can't send a second SMS
+    // (only when idempotency.store=postgres; the default in-memory store needs no DB)
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    runtimeOnly("org.postgresql:postgresql")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 

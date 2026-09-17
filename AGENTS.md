@@ -48,10 +48,10 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Kafka
 ## Local-dev environment gotchas (this machine)
 - WSL2 shuts the distro down between separate shell invocations, killing running containers —
   do multi-step Docker work in ONE session.
-- The Windows host cannot reach WSL2 Docker published ports, so a Windows-JVM app or
-  Testcontainers cannot connect to WSL Kafka/Postgres. Verify broker/DB integration **inside
-  WSL** (e.g. `docker exec <container> kafka-console-...`). Deployment is unaffected (shared
-  network). Local fix: WSL `networkingMode=mirrored`.
+- The Windows host **can** reach WSL2 Docker published ports (verified 2026-09-17:
+  `Test-NetConnection localhost -Port 5432` → True, and `:services:user-account:test`
+  `contextLoads` passes over real JDBC). An earlier note here claimed the opposite — it was wrong.
+  If a connection fails, check the container is actually running before blaming networking.
 
 ## Key decisions (see STATUS.md for rationale)
 - Recognition model is **DeepFaune** (not SpeciesNet) — targets European animals.

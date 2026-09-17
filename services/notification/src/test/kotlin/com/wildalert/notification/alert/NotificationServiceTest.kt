@@ -3,6 +3,7 @@ package com.wildalert.notification.alert
 import com.wildalert.notification.event.AnimalRecognized
 import com.wildalert.notification.hunter.HunterClient
 import com.wildalert.notification.hunter.HunterContact
+import com.wildalert.notification.idempotency.InMemoryProcessedEvents
 import com.wildalert.notification.sms.SmsMessage
 import com.wildalert.notification.sms.SmsResult
 import com.wildalert.notification.sms.SmsSender
@@ -29,7 +30,8 @@ class NotificationServiceTest {
 
     private val hunterClient: HunterClient = mock(HunterClient::class.java)
     private val smsSender = RecordingSmsSender()
-    private val service = NotificationService(hunterClient, smsSender)
+    private val processedEvents = InMemoryProcessedEvents()
+    private val service = NotificationService(hunterClient, smsSender, processedEvents)
 
     private val hunterId = UUID.randomUUID()
 
@@ -76,6 +78,50 @@ class NotificationServiceTest {
 
         assertThatThrownBy { service.notify(event(hunterId)) }.isInstanceOf(ResourceAccessException::class.java)
         assertThat(smsSender.sent).isEmpty()
+    }
+
+    @Test
+    fun `a redelivered event does not text the hunter twice`() {
+        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        val event = event(hunterId)
+
+        service.notify(event)
+        service.notify(event.copy(eventId = UUID.randomUUID())) // republished result, same source photo
+
+        assertThat(smsSender.sent).hasSize(1)
+    }
+
+    @Test
+    fun `two photos from the same hunter each get their own SMS`() {
+        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+
+        service.notify(event(hunterId))
+        service.notify(event(hunterId)) // different sourceEventId
+
+        assertThat(smsSender.sent).hasSize(2)
+    }
+
+    @Test
+    fun `a failed send releases the claim so the retry still texts the hunter`() {
+        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        val failing = object : SmsSender {
+            var fail = true
+            val sent = mutableListOf<SmsMessage>()
+            override fun send(message: SmsMessage): SmsResult {
+                if (fail) throw IllegalStateException("Twilio unavailable")
+                sent.add(message)
+                return SmsResult("after-retry")
+            }
+        }
+        val retryingService = NotificationService(hunterClient, failing, processedEvents)
+        val event = event(hunterId)
+
+        assertThatThrownBy { retryingService.notify(event) }.isInstanceOf(IllegalStateException::class.java)
+        failing.fail = false
+        retryingService.notify(event) // Kafka redelivers the same event
+
+        // The failed attempt must not count as handled, or the hunter would never be told.
+        assertThat(failing.sent).hasSize(1)
     }
 
     private fun event(hunterId: UUID?) = AnimalRecognized(
