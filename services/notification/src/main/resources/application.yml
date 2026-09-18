@@ -16,6 +16,10 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    # Producer is only used to park failed messages in <topic>.dlt (KafkaErrorHandlingConfig).
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
   # Only used when idempotency.store=postgres (see PostgresIdempotencyConfig).
   datasource:

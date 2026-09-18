@@ -7,15 +7,21 @@ Delivery is **at-least-once**: a message's offset is committed only after its re
 delivered to Kafka. If the worker dies in between, the message is redelivered and handled again —
 so consumers of `animal.recognized` must tolerate duplicates (that is what `sourceEventId` is for).
 
-Failure policy (retries and a dead-letter topic come in the hardening slice):
-- A message that can never succeed (invalid JSON / schema, or no image under its key) is logged
-  and skipped, so one bad message can't block the partition forever.
-- Anything else (broker, storage or model failure) is raised without committing: the worker exits
-  and, once restarted, retries from the last committed offset.
+Failure policy:
+- A message that can never succeed (invalid JSON / schema, or no image under its key) goes straight
+  to the dead-letter topic — retrying it would only block the partition.
+- Anything else (storage hiccup, model failure) is retried a few times with a growing pause; if it
+  still fails, the message goes to the dead-letter topic so the queue keeps moving.
+- Only a failure to reach Kafka itself is raised: the worker exits without committing and retries
+  the message after a restart. (Trade-off: a long storage outage sends a backlog to the dead-letter
+  topic rather than waiting it out. Replaying that topic is a later slice.)
+
+Dead-lettered messages keep their original bytes and key, with the reason in a `reason` header.
 """
 
 import logging
 import signal
+import time
 from collections.abc import Callable
 from typing import Protocol
 
@@ -44,23 +50,13 @@ class MessageConsumer(Protocol):
 class MessageProducer(Protocol):
     """The slice of confluent_kafka.Producer the worker uses (lets tests pass a fake)."""
 
-    def produce(self, topic: str, value: str, key: str, on_delivery) -> None: ...
+    def produce(self, topic: str, value, key, on_delivery, headers=None) -> None: ...
 
     def flush(self, timeout: float) -> int: ...
 
 
-def parse_and_handle(value: bytes | None, handle_fn: HandleFn) -> AnimalRecognized | None:
-    """Turns one raw message into a result, or None if the message should be skipped."""
-    try:
-        event = ImageReceived.model_validate_json(value or b"")
-    except ValidationError as e:
-        log.warning("Skipping invalid ImageReceived message: %s", e)
-        return None
-    try:
-        return handle_fn(event)
-    except ImageNotFoundError as e:
-        log.warning("Skipping ImageReceived id=%s: %s", event.event_id, e)
-        return None
+class Undeliverable(Exception):
+    """Raised for a message that can never succeed, so it is dead-lettered without retrying."""
 
 
 class RecognitionWorker:
@@ -70,16 +66,24 @@ class RecognitionWorker:
         producer: MessageProducer,
         handle_fn: HandleFn,
         output_topic: str,
+        dead_letter_topic: str,
+        max_attempts: int = 3,
+        retry_backoff_seconds: float = 2.0,
         delivery_timeout: float = 30.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._consumer = consumer
         self._producer = producer
         self._handle_fn = handle_fn
         self._output_topic = output_topic
+        self._dead_letter_topic = dead_letter_topic
+        self._max_attempts = max_attempts
+        self._retry_backoff_seconds = retry_backoff_seconds
         self._delivery_timeout = delivery_timeout
+        self._sleep = sleep
 
     def poll_once(self, timeout: float = 1.0) -> None:
-        """Processes at most one message: handle → publish → wait for delivery → commit."""
+        """Processes at most one message, then commits it as done (handled or dead-lettered)."""
         message = self._consumer.poll(timeout)
         if message is None:
             return
@@ -88,26 +92,43 @@ class RecognitionWorker:
             log.warning("Kafka consumer error: %s", message.error())
             return
 
-        result = parse_and_handle(message.value(), self._handle_fn)
-        if result is not None:
-            self._publish(result)
+        self._process(message)
         self._consumer.commit(message=message, asynchronous=False)
 
+    def _process(self, message) -> None:
+        try:
+            event = ImageReceived.model_validate_json(message.value() or b"")
+        except ValidationError as e:
+            self._dead_letter(message, f"invalid ImageReceived: {e}")
+            return
+
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                self._publish(self._handle_fn(event))
+                return
+            except ImageNotFoundError as e:
+                self._dead_letter(message, str(e))
+                return
+            except Undeliverable as e:
+                self._dead_letter(message, str(e))
+                return
+            except KafkaException:
+                raise  # can't reach Kafka: don't commit, let a restart retry the message
+            except Exception as e:
+                if attempt == self._max_attempts:
+                    self._dead_letter(message, f"failed after {attempt} attempts: {e!r}")
+                    return
+                pause = self._retry_backoff_seconds * attempt
+                log.warning(
+                    "Attempt %d/%d failed for ImageReceived id=%s (%r); retrying in %.1fs",
+                    attempt, self._max_attempts, event.event_id, e, pause,
+                )
+                self._sleep(pause)
+
     def _publish(self, result: AnimalRecognized) -> None:
-        errors = []
         # Keyed like email-ingestion: by hunter, so one hunter's events stay ordered.
         key = str(result.hunter_id or result.event_id)
-        self._producer.produce(
-            self._output_topic,
-            value=result.to_json(),
-            key=key,
-            on_delivery=lambda err, _msg: errors.append(err) if err else None,
-        )
-        # Block until Kafka confirms the write, so we never commit an unpublished result.
-        if self._producer.flush(self._delivery_timeout) > 0:
-            raise KafkaException(f"Timed out delivering AnimalRecognized id={result.event_id}")
-        if errors:
-            raise KafkaException(errors[0])
+        self._send(self._output_topic, result.to_json(), key)
         log.info(
             "Published AnimalRecognized id=%s source=%s species=%s confidence=%.2f low=%s",
             result.event_id,
@@ -116,6 +137,31 @@ class RecognitionWorker:
             result.confidence,
             result.low_confidence,
         )
+
+    def _dead_letter(self, message, reason: str) -> None:
+        """Parks the original message, so the partition keeps moving and nothing is lost."""
+        self._send(
+            self._dead_letter_topic,
+            message.value(),
+            message.key(),
+            headers=[("reason", reason.encode("utf-8")[:1000])],
+        )
+        log.error("Dead-lettered message to %s: %s", self._dead_letter_topic, reason)
+
+    def _send(self, topic: str, value, key, headers=None) -> None:
+        errors = []
+        self._producer.produce(
+            topic,
+            value=value,
+            key=key,
+            on_delivery=lambda err, _msg: errors.append(err) if err else None,
+            headers=headers,
+        )
+        # Block until Kafka confirms the write, so we never commit an unpublished message.
+        if self._producer.flush(self._delivery_timeout) > 0:
+            raise KafkaException(f"Timed out delivering a message to {topic}")
+        if errors:
+            raise KafkaException(errors[0])
 
 
 def main(settings: Settings | None = None) -> None:
@@ -142,6 +188,9 @@ def main(settings: Settings | None = None) -> None:
         producer,
         handle_fn=lambda event: handle(event, source, classifier, settings.confidence_threshold),
         output_topic=settings.animal_recognized_topic,
+        dead_letter_topic=settings.dead_letter_topic,
+        max_attempts=settings.max_attempts,
+        retry_backoff_seconds=settings.retry_backoff_seconds,
     )
 
     running = True
@@ -156,12 +205,13 @@ def main(settings: Settings | None = None) -> None:
 
     consumer.subscribe([settings.image_received_topic])
     log.info(
-        "Recognition worker consuming %s (group=%s, broker=%s, classifier=%s, image source=%s)",
+        "Recognition worker consuming %s (group=%s, broker=%s, classifier=%s, image source=%s, dlt=%s)",
         settings.image_received_topic,
         settings.consumer_group,
         settings.kafka_bootstrap_servers,
         settings.classifier,
         settings.image_source,
+        settings.dead_letter_topic,
     )
     try:
         while running:

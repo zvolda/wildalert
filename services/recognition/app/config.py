@@ -35,6 +35,12 @@ class Settings(BaseModel):
     animal_recognized_topic: str = "animal.recognized"
     # Consumer group: all worker replicas share it, so each event is handled by one of them.
     consumer_group: str = "recognition"
+    # Messages that can't be processed are parked here instead of blocking the partition.
+    dead_letter_topic: str = "image.received.dlt"
+    # How many times a failing message is tried before it is dead-lettered, and the pause between
+    # attempts (grows with each attempt: 1x, 2x, ...).
+    max_attempts: int = 3
+    retry_backoff_seconds: float = 2.0
 
 
 # Plain string settings and the environment variable each one is read from.
@@ -51,15 +57,24 @@ _STRING_ENV_VARS = {
     "image_received_topic": "IMAGE_RECEIVED_TOPIC",
     "animal_recognized_topic": "ANIMAL_RECOGNIZED_TOPIC",
     "consumer_group": "RECOGNITION_CONSUMER_GROUP",
+    "dead_letter_topic": "IMAGE_RECEIVED_DLT_TOPIC",
+}
+
+# Numeric settings, parsed with the matching type.
+_NUMBER_ENV_VARS = {
+    "confidence_threshold": ("RECOGNITION_CONFIDENCE_THRESHOLD", float),
+    "max_attempts": ("RECOGNITION_MAX_ATTEMPTS", int),
+    "retry_backoff_seconds": ("RECOGNITION_RETRY_BACKOFF_SECONDS", float),
 }
 
 
 @lru_cache
 def get_settings() -> Settings:
     kwargs = {}
-    threshold = os.getenv("RECOGNITION_CONFIDENCE_THRESHOLD")
-    if threshold is not None:
-        kwargs["confidence_threshold"] = float(threshold)
+    for field, (env_var, parse) in _NUMBER_ENV_VARS.items():
+        value = os.getenv(env_var)
+        if value:
+            kwargs[field] = parse(value)
     for field, env_var in _STRING_ENV_VARS.items():
         value = os.getenv(env_var)
         if value:

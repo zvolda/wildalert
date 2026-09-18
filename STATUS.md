@@ -76,8 +76,22 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   **claims** `sourceEventId` before sending (`insert … on conflict do nothing`, so racing replicas
   can't both send) and **releases** it if the send throws, so a failed send is still retried.
   `DataSourceAutoConfiguration` is excluded, so the service still starts with no database.
-- **Remaining slices:**
-  1. Retries + dead-letter topics for messages that keep failing (both consumers).
+- **Slice 7 (done, pending review):** retries + dead-letter topics, closing Phase 5. Both
+  consumers now park what they can't process in `<topic>.dlt` (original bytes + key, reason in a
+  header) and commit, so nothing is lost and one bad message can't block a partition.
+  - **Python worker:** unprocessable messages (invalid JSON, missing image) are dead-lettered
+    immediately; other failures get 3 attempts with a growing pause, then the DLT. Only a failure
+    to reach Kafka is raised (no commit → retried after restart).
+  - **Notification (Kotlin):** `DefaultErrorHandler` + `DeadLetterPublishingRecoverer`, 3 attempts
+    2s apart, `HttpClientErrorException` treated as not retryable. Replaces Spring's default of
+    retrying fast and then silently dropping the alert.
+  - **Verified in WSL:** with user-account stopped, a valid result ended up in
+    `animal.recognized.dlt`; an `ImageReceived` pointing at a missing image ended up in
+    `image.received.dlt` with `reason:No image stored under key …`. Both consumer groups ended at
+    LAG 0. _Not directly observed: the retry count/timing — only that the handler gave up and
+    dead-lettered._
+  - **Known trade-off:** a long storage outage would push a backlog into the DLT rather than
+    waiting it out. A replay tool for the DLT is a Phase 7 job.
 
 ## Remaining phases
 - **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
