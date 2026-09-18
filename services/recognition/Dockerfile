@@ -41,4 +41,5 @@ COPY app ./app
 ENV RECOGNITION_CLASSIFIER=deepfaune
 
 EXPOSE 8084
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8084"]
+# Shell form so Cloud Run's $PORT is expanded; locally it falls back to 8084.
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8084}

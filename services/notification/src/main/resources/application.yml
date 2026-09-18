@@ -33,7 +33,8 @@ spring:
     create-schemas: true
 
 server:
-  port: 8082
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8082}
 
 services:
   # Base URL of the user-account service, used to look up the hunter's phone number.

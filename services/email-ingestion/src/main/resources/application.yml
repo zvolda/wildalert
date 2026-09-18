@@ -20,7 +20,8 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
 
 server:
-  port: 8083
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8083}
   # Allow a larger raw email body (default is ~2MB).
   tomcat:
     max-http-form-post-size: 25MB

@@ -25,7 +25,8 @@ spring:
     enabled: true
 
 server:
-  port: 8081
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8081}
 
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
