@@ -1,0 +1,7 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+# S3 API client — reads stored images from Cloudflare R2 (RECOGNITION_IMAGE_SOURCE=r2)
+boto3==1.43.94
+# Kafka client (librdkafka) — the worker consumes image.received and publishes animal.recognized
+confluent-kafka==2.15.1

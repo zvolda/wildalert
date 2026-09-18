@@ -1,0 +1,4 @@
+# Ignore all sample photos (large / possibly private); keep this folder + its docs in git.
+*
+!.gitignore
+!README.md

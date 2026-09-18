@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: email-ingestion
+
+  # Optional local secrets (R2 creds) from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
+  # Trail-cam emails can carry large photos; raise the request size limit.
+  servlet:
+    multipart:
+      max-request-size: 25MB
+      max-file-size: 25MB
+
+  # Kafka — used only when events.provider=kafka. Host apps reach the compose broker on 29092.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+server:
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8083}
+  # Allow a larger raw email body (default is ~2MB).
+  tomcat:
+    max-http-form-post-size: 25MB
+    max-swallow-size: 25MB
+
+services:
+  # Base URL of the user-account service, used to match a sender to a hunter.
+  user-account:
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+
+events:
+  # 'logging' (fake, default) or 'kafka'
+  provider: ${EVENTS_PROVIDER:logging}
+  topic:
+    image-received: ${IMAGE_RECEIVED_TOPIC:image.received}
+
+storage:
+  # 'logging' (fake, default), 'filesystem' (local folder, readable by recognition) or 'r2'
+  provider: ${STORAGE_PROVIDER:logging}
+  filesystem:
+    # Relative paths resolve against the working directory (the repo root for bootRun/tests).
+    root: ${STORAGE_FILESYSTEM_ROOT:data/images}
+  r2:
+    endpoint: ${R2_ENDPOINT:}
+    bucket: ${R2_BUCKET:}
+    access-key: ${R2_ACCESS_KEY:}
+    secret-key: ${R2_SECRET_KEY:}
+    region: ${R2_REGION:auto}

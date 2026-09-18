@@ -1,0 +1,61 @@
+spring:
+  application:
+    name: notification
+
+  # Optional local secrets (Twilio creds) from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
+  # Kafka — used only when events.provider=kafka. Host apps reach the compose broker on 29092.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      # All notification replicas share this group, so each event is handled by one of them.
+      group-id: ${NOTIFICATION_CONSUMER_GROUP:notification}
+      # A brand-new group starts from the oldest unprocessed events, not only new ones.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    # Producer is only used to park failed messages in <topic>.dlt (KafkaErrorHandlingConfig).
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+  # Only used when idempotency.store=postgres (see PostgresIdempotencyConfig).
+  datasource:
+    url: ${DATABASE_URL:}
+    username: ${POSTGRES_USER:}
+    password: ${POSTGRES_PASSWORD:}
+
+  # This service owns its own schema; user-account keeps the public one (separate Flyway history).
+  flyway:
+    schemas: notification
+    create-schemas: true
+
+server:
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8082}
+
+services:
+  # Base URL of the user-account service, used to look up the hunter's phone number.
+  user-account:
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+
+events:
+  # 'none' (default — no consumer, the app runs without a broker) or 'kafka'
+  provider: ${EVENTS_PROVIDER:none}
+  topic:
+    animal-recognized: ${ANIMAL_RECOGNIZED_TOPIC:animal.recognized}
+
+idempotency:
+  # Where handled events are remembered so a redelivery can't send a second SMS:
+  # 'memory' (fake, default — per-instance, lost on restart) or 'postgres' (shared, durable).
+  store: ${IDEMPOTENCY_STORE:memory}
+
+sms:
+  # 'logging' (fake, default) or 'twilio'
+  provider: ${SMS_PROVIDER:logging}
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:}
+    auth-token: ${TWILIO_AUTH_TOKEN:}
+    sender-id: ${TWILIO_SENDER_ID:}

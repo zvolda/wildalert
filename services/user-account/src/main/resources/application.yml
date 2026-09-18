@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: user-account
+
+  # Loads DB creds from the git-ignored .env (repo root) for local dev.
+  # In the cloud these come from real environment variables instead.
+  config:
+    import: optional:file:.env[.properties]
+
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate only validates that entities match it.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+
+server:
+  # Cloud Run injects PORT; locally it falls back to the service's own port.
+  port: ${PORT:8081}
+
+hunters:
+  # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
+  # Cloudflare Email Routing catch-all subdomain, e.g. in.wildalert.app.
+  inbound-domain: ${INBOUND_EMAIL_DOMAIN:in.wildalert.local}
