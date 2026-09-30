@@ -6,6 +6,14 @@ spring:
   config:
     import: optional:file:.env[.properties]
 
+  # Outbound HTTP (the RestClient used to look up hunters). Without explicit timeouts a hung
+  # user-account would hold the webhook open indefinitely. HunterLookupClient retries once, so
+  # the worst case is roughly 2 x (connect + read).
+  http:
+    client:
+      connect-timeout: 2s
+      read-timeout: 5s
+
   # Trail-cam emails can carry large photos; raise the request size limit.
   servlet:
     multipart:
@@ -26,6 +34,13 @@ server:
   tomcat:
     max-http-form-post-size: 25MB
     max-swallow-size: 25MB
+
+webhook:
+  # Shared secret the email-routing webhook must send in the header below. Empty (the default)
+  # leaves /api/emails open, which is fine locally — set WEBHOOK_SECRET before the service is
+  # reachable from the internet, and put the same value in the Cloudflare Email Worker.
+  secret: ${WEBHOOK_SECRET:}
+  header-name: ${WEBHOOK_HEADER_NAME:X-Webhook-Secret}
 
 services:
   # Base URL of the user-account service, used to match a sender to a hunter.
@@ -50,3 +65,18 @@ storage:
     access-key: ${R2_ACCESS_KEY:}
     secret-key: ${R2_SECRET_KEY:}
     region: ${R2_REGION:auto}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. The other endpoints (env, metrics, heapdump) would leak configuration
+        # from a public Cloud Run URL, and nothing needs them yet.
+        include: health
+  endpoint:
+    health:
+      # Adds /actuator/health/liveness and /actuator/health/readiness — the probes Cloud Run
+      # calls. Both only report application state; this service has no data store whose outage
+      # should take an instance out of rotation.
+      probes:
+        enabled: true

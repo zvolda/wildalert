@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component
  *
  * Offsets: Spring Kafka commits after this method returns, so a crash mid-send means the event
  * is redelivered (at-least-once). Unreadable JSON is logged and skipped. Any other exception
- * (user-account or SMS provider down) goes to Spring Kafka's default error handler, which retries
- * the record a few times and then logs and skips it — a dead-letter topic comes in hardening.
+ * (user-account or SMS provider down) goes to the error handler in KafkaErrorHandling, which
+ * retries the record a few times and then parks it in <topic>.dlt rather than dropping it.
  */
 @Component
 @ConditionalOnProperty(name = ["events.provider"], havingValue = "kafka")

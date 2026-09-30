@@ -6,6 +6,14 @@ spring:
   config:
     import: optional:file:.env[.properties]
 
+  # Outbound HTTP (the RestClient used to look up a hunter's phone number). More generous than
+  # email-ingestion's on purpose: a timeout here throws, and Kafka retries the event, so waiting
+  # out a cold-starting user-account is cheaper than burning a retry.
+  http:
+    client:
+      connect-timeout: 2s
+      read-timeout: 10s
+
   # Kafka — used only when events.provider=kafka. Host apps reach the compose broker on 29092.
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
@@ -59,3 +67,18 @@ sms:
     account-sid: ${TWILIO_ACCOUNT_SID:}
     auth-token: ${TWILIO_AUTH_TOKEN:}
     sender-id: ${TWILIO_SENDER_ID:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. The other endpoints (env, metrics, heapdump) would leak configuration
+        # from a public Cloud Run URL, and nothing needs them yet.
+        include: health
+  endpoint:
+    health:
+      # Adds /actuator/health/liveness and /actuator/health/readiness — the probes Cloud Run
+      # calls. Both only report application state; this service has no data store whose outage
+      # should take an instance out of rotation.
+      probes:
+        enabled: true

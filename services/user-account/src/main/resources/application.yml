@@ -32,3 +32,22 @@ hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
   # Cloudflare Email Routing catch-all subdomain, e.g. in.wildalert.app.
   inbound-domain: ${INBOUND_EMAIL_DOMAIN:in.wildalert.local}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. The other endpoints (env, metrics, heapdump) would leak configuration
+        # from a public Cloud Run URL, and nothing needs them yet.
+        include: health
+  endpoint:
+    health:
+      # Adds /actuator/health/liveness and /actuator/health/readiness — the probes Cloud Run calls.
+      probes:
+        enabled: true
+      group:
+        readiness:
+          # By default readiness only means "startup finished". Every endpoint here needs the
+          # database, so an instance that cannot reach Postgres/Cloud SQL should not be sent
+          # traffic — verified by stopping the container and watching readiness go 503.
+          include: readinessState,db

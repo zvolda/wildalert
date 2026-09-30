@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-09-15. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-09-30. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -33,7 +33,7 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   in behind a `Classifier` interface (MegaDetector→crop→DeepFaune), CPU Docker image with
   weights baked in, plus bake-off tooling. Verified end-to-end on real photos.
 
-## In progress — Phase 5 (Kafka wiring)
+## Done — Phase 5 (Kafka wiring)
 - **Slice 1 (done):** email-ingestion `KafkaEventPublisher` publishes `ImageReceived` (JSON)
   to topic `image.received`. Unit-tested; verified with a real broker round-trip.
 - **Slice 2 (done):** image fetch by storage key. email-ingestion
@@ -93,9 +93,49 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   - **Known trade-off:** a long storage outage would push a backlog into the DLT rather than
     waiting it out. A replay tool for the DLT is a Phase 7 job.
 
+## In progress — Phase 6 (deploy to managed cloud)
+- **Slice 0 (done):** ports are injectable — `server.port=${PORT:<own>}` in all three Kotlin
+  services and a shell-form `CMD` in the recognition Dockerfile, so Cloud Run's injected `PORT`
+  is honoured and local defaults still work.
+- **Slice 1 (done, pending review):** the three things that would have bitten us on first deploy.
+  - **email-ingestion no longer loses an email when user-account is unreachable.**
+    `HunterLookupClient` caught only 404, so a connection failure 500'd the webhook and the photo
+    was never stored — unrecoverable. It now retries once (the common cause is a peer instance
+    cold-starting, which is routine on Cloud Run) and then degrades to "no match": the image is
+    still stored and `ImageReceived` still published with a null `hunterId`, which the pipeline
+    already handles. Only that photo's SMS is missed. Explicit `spring.http.client.*` timeouts
+    added too (email-ingestion 2s/5s; notification 2s/10s, more generous because a timeout there
+    throws and Kafka retries the event).
+  - **Shared secret on the email webhook.** `WebhookAuthFilter` requires `X-Webhook-Secret` on
+    `/api/emails` (constant-time compare, 401 otherwise). It guards only that path, so health
+    probes stay open, and stands down with a loud startup warning when `WEBHOOK_SECRET` is unset
+    — local dev and tests need no setup. Without this, a public Cloud Run URL would let anyone
+    push images through storage and DeepFaune at our expense.
+  - **Actuator health/readiness on all three Kotlin services.** Only the `health` endpoint is
+    exposed (`env`/`metrics`/`heapdump` would leak config from a public URL); `probes.enabled`
+    adds `/actuator/health/liveness` and `/readiness` for Cloud Run. **Gotcha found while
+    verifying:** Boot's default readiness group contains only `readinessState`, so user-account's
+    readiness stayed UP with Postgres stopped even though `/actuator/health` was 503. Fixed by
+    `group.readiness.include: readinessState,db` — an instance that can't reach the DB is now
+    taken out of rotation while liveness stays UP (no pointless restart).
+  - **Verified:** full suite green (79 Kotlin tests incl. `contextLoads` with Postgres up, 32
+    Python). Against a running email-ingestion: no header → 401, wrong secret → 401, correct
+    secret → 200 with the image stored, `/actuator/health` + both probes → 200, `/actuator/env`
+    → 404. The 200 case also proved the resilience fix — user-account was *not* running, and the
+    log shows one retry then "treating it as no match" instead of a 500. Against user-account
+    with Postgres stopped/started: readiness 503↔200 while liveness stayed 200.
+  - **Still open (structural):** matching the hunter inside the synchronous webhook means a real
+    user-account outage silently costs alerts. The clean fix is to publish the recipient address
+    on the event and resolve the hunter in notification instead; `min-instances=1` on user-account
+    sidesteps the cold-start case in the meantime.
+
+## Remaining Phase 6 work
+- Managed Postgres (Cloud SQL vs Neon/Supabase), broker decision (managed Kafka vs **Pub/Sub
+  push** — see the scale-to-zero trade-off in ROADMAP Open Decisions), deploy the containers to
+  Cloud Run, Secret Manager + env separation, domain + Cloudflare Email Routing catch-all with an
+  Email Worker that POSTs the raw email plus `?envelopeTo=` and the webhook secret header.
+
 ## Remaining phases
-- **6 — Deploy** to managed cloud (Cloud Run + managed Postgres + managed Kafka/Pub-Sub + R2
-  + Cloudflare Email Routing).
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth).
 - **8 — React frontend.**
@@ -119,9 +159,6 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   actually adds; `envelopeTo` is the reliable path.
 - **user-account `contextLoads` test needs Postgres running** (`docker compose up -d postgres`);
   unit/web tests don't. It passes from the Windows host once the container is up.
-- **`HunterLookupClient` resilience:** only catches 404; if user-account is down, the
-  ingestion webhook 500s and no event is created. Fix = also catch connection errors → treat
-  as no-match (degrade gracefully). _Not yet done._
 - **Recognition first-request latency:** model loads on first `/recognize` (~1 min); could
   warm at startup. (The Kafka worker already loads it at startup.)
 - **Model licences — resolve before charging money:** `MegaDetectorV6("MDV6-yolov9-c")` is
