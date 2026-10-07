@@ -1,0 +1,12 @@
+# Keep the build context small: only app/ + requirements.txt are needed in the image.
+.venv/
+venv/
+tests/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.md
+models/
+*.pt
+*.pth
+*.onnx

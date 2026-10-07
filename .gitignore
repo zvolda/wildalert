@@ -34,3 +34,6 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local image storage (storage.provider=filesystem)
+/data/

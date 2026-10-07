@@ -1,0 +1,26 @@
+# Builds one service image from the repo root and pushes it to Artifact Registry.
+# The build runs in the cloud, so no local Docker is needed (handy given Docker lives in WSL2).
+#
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_SERVICE=user-account,_IMAGE=<full image ref> .
+#
+# Each service's Dockerfile expects the repo root as its build context (it runs ./gradlew), which
+# is why the Dockerfile is passed with -f rather than being found automatically.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=services/${_SERVICE}/Dockerfile
+      - --tag=${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+options:
+  # The Gradle build is CPU-bound and the root .dockerignore excludes .gradle/, so every build
+  # downloads Gradle and the dependencies fresh. A bigger machine keeps that to a few minutes.
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
