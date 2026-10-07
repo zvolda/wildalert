@@ -227,50 +227,64 @@ new secret version instead of a redeploy.
 
 ---
 
-## Step 8 — Build the image (the one step the UI cannot do)
+## Step 8 — Build the image (a Cloud Build trigger)
 
-There is no "build my Dockerfile" button in the console — the source is on your machine, not on
-Google's. Two browser-only options:
+There is no "build my Dockerfile" button on a Cloud Run or Artifact Registry page, but the build is
+still clickable: a **Cloud Build trigger** builds from GitHub using
+[`cloudbuild.yaml`](./cloudbuild.yaml), and it is the CI/CD answer anyway — it closes the "deploys
+happen from someone's laptop" gap. Push to `main`, get an image.
 
-### Option A — Cloud Shell (no local setup)
-
-Click the **Cloud Shell** icon (`>_`) in the top right of the console. It is a browser terminal
-with `gcloud`, `git` and Docker already installed, authenticated as you.
-
-```bash
-git clone https://github.com/zvolda/wildalert.git
-cd wildalert
-git checkout initialsetup
-
-IMAGE="europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account:$(git rev-parse --short HEAD)"
-gcloud builds submit --config deploy/cloudbuild.yaml \
-  --substitutions="_SERVICE=user-account,_IMAGE=${IMAGE}" .
-
-echo "$IMAGE"   # you need this in step 9
-```
-
-Takes a few minutes — the Gradle build downloads its dependencies inside the container.
-
-### Option B — a Cloud Build trigger (the CI/CD answer)
-
-**Navigation:** Cloud Build → Triggers → **Create Trigger**
+**Navigation:** ☰ → CI/CD → Cloud Build → **Triggers**, region **`europe-west3`** (triggers are
+regional; keep it with the registry) → **+ Create trigger**
 
 | Field | Value |
 |---|---|
 | Name | `user-account-main` |
-| Event | Push to a branch |
-| Source | connect `github.com/zvolda/wildalert` (one-time GitHub authorisation) |
+| Event | **Push to a branch** |
+| Source → Repository | **Connect new repository** → GitHub → authorise → install the Cloud Build app on `zvolda/wildalert` → Connect |
 | Branch | `^main$` |
-| Configuration | Cloud Build configuration file → `deploy/cloudbuild.yaml` |
-| Substitution variables | `_SERVICE` = `user-account`, `_IMAGE` = `europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account:$SHORT_SHA` |
+| Configuration → Type | **Cloud Build configuration file (yaml or json)** |
+| Location | Repository |
+| Configuration file location | `deploy/cloudbuild.yaml` |
+| Service account | `789527844011-compute@developer.gserviceaccount.com` |
 
-More setup, but then every push to `main` rebuilds automatically — which is how teams actually do
-this, and it closes the "deploys happen from someone's laptop" gap.
+Substitution variables (**Advanced** → **+ Add variable**) — both are required, `cloudbuild.yaml`
+reads them:
 
-Either way, confirm the image landed: Artifact Registry → `wildalert` → `user-account`.
+| Variable | Value |
+|---|---|
+| `_SERVICE` | `user-account` |
+| `_IMAGE_BASE` | `europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account` — **no tag** |
 
-*Cost: build minutes (there is a daily free allowance) plus a little storage for the image and the
-uploaded source.*
+The tag is added inside `cloudbuild.yaml` as `$SHORT_SHA`, the commit being built, so every image is
+traceable to its code without you typing a tag. It has to happen there: Cloud Build does **not**
+re-scan the value of a user substitution for built-ins, so a substitution field containing
+`...:$SHORT_SHA` fails with `could not parse reference`.
+
+**Build without waiting for a push:** Triggers list → **⋮** → **Run trigger** → branch `main` →
+**Run**. Watch it under **Cloud Build → History**; the log streams there (`cloudbuild.yaml` sets
+`logging: CLOUD_LOGGING_ONLY`). A few minutes — the root `.dockerignore` excludes `.gradle/`, so
+Gradle downloads its dependencies fresh every build, which is why the config asks for
+`E2_HIGHCPU_8` and a 30-minute timeout.
+
+**Connecting the repository is a real authorisation:** it installs Google's Cloud Build GitHub App
+with read access to that repo plus a webhook, which is what makes push-triggered builds work. If you
+would rather not build on every push, set the event to **Manual invocation** instead — `$SHORT_SHA`
+still resolves.
+
+Confirm the image landed: Artifact Registry → `wildalert` → `user-account`, and note the tag — step
+9 needs that exact string.
+
+```bash
+gcloud artifacts docker images list   europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account   --format="table(package,version,tags,createTime)"
+```
+
+**Avoid Cloud Run's "Continuously deploy from a repository" option** for this service, tempting as it
+looks in the deploy form: it generates its own build config, ignoring this `cloudbuild.yaml` — so the
+cold Gradle build loses the bigger machine and the longer timeout — and it pushes the image into a
+separate `cloud-run-source-deploy` repository instead of `wildalert`.
+
+*Cost: build minutes (there is a daily free allowance) plus a little storage for the image.*
 
 ---
 

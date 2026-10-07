@@ -6,7 +6,9 @@
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /app
 COPY . .
-RUN ./gradlew :services:user-account:bootJar --no-daemon
+# chmod: gradlew is committed without the execute bit (it was added from Windows), so
+# ./gradlew would be "Permission denied" in the build image.
+RUN chmod +x gradlew && ./gradlew :services:user-account:bootJar --no-daemon
 
 # --- Run stage ---
 FROM eclipse-temurin:25-jre
