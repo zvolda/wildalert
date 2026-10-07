@@ -250,6 +250,18 @@ then the async flow, then deploy, then scale.
   - [ ] Automatic image expiry: storage **lifecycle rules** (R2/GCS) or a cleanup function
   - [ ] Structured logging + basic metrics/alerts
   - [ ] Basic auth on internal/admin endpoints
+  - [ ] **Strip `roles/editor` from the default compute service account**
+    (`789527844011-compute@developer.gserviceaccount.com`). `wildalert-prod` has no parent
+    organization, so Google's `iam.automaticIamGrantsForDefaultServiceAccounts` policy (default
+    only for orgs created on/after 2024-05-03) never applied and the legacy automatic Editor grant
+    fired. Since this project's first build post-dates Google's mid-2024 change, `gcloud builds
+    submit` runs **as that account** — so Editor must be replaced with explicit build roles first,
+    or builds break: `roles/logging.logWriter` (cloudbuild.yaml sets
+    `logging: CLOUD_LOGGING_ONLY`), `roles/artifactregistry.writer`, and read on the
+    `*_cloudbuild` source bucket (`roles/storage.objectViewer`). Better still, give Cloud Build its
+    own service account via `--service-account` and leave the compute default unused. Deliberately
+    deferred out of Phase 6: doing it before the first green deploy means debugging IAM and the
+    deploy at the same time. Don't delete/disable the account — bindings don't restore cleanly.
 - **DoD (review against):** smart-SMS mode measurably cuts SMS count; logs/metrics let you
   trace a request end-to-end; admin endpoints not publicly open.
 

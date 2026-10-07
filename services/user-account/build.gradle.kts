@@ -33,6 +33,11 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
 
+    // Cloud SQL connector. Only used in the cloud, where DATABASE_URL names it as the JDBC
+    // socketFactory — the driver loads it by name, so runtimeOnly is enough. Local dev connects
+    // straight to the compose Postgres over TCP and never touches it.
+    runtimeOnly("com.google.cloud.sql:postgres-socket-factory:1.28.4")
+
     // Request validation (@Valid, @Email, ...)
     implementation("org.springframework.boot:spring-boot-starter-validation")
 

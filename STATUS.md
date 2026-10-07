@@ -129,11 +129,61 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
     on the event and resolve the hunter in notification instead; `min-instances=1` on user-account
     sidesteps the cold-start case in the meantime.
 
+- **Slice 2 (infrastructure provisioned, service not yet deployed):** **Cloud SQL** (an explicit
+  learning target) in **europe-west3**, all of it created **by hand in the Cloud Console** rather
+  than by script — the point was to see the forms. `deploy/CONSOLE.md` is the click-by-click
+  walkthrough and the record of which option was chosen where; `deploy/README.md` holds the settings
+  table, cost model, verification commands and troubleshooting.
+  - **What exists (verified by `gcloud ... describe`):** Artifact Registry `wildalert`
+    (europe-west3, Docker); service account `wildalert-user-account@…` with exactly
+    `cloudsql.client` + `secretmanager.secretAccessor` and no user-managed keys; Cloud SQL
+    `wildalert-db` (**PostgreSQL 18**, db-f1-micro, zonal, 10 GB HDD, `europe-west3-c`); database
+    `wildalert` (UTF8/en_US.UTF8); built-in user `wildalert`; secret `wildalert-db-password` (v1,
+    payload checked for stray whitespace).
+  - **The console's presets lie about what they switch off.** With the *Sandbox* preset chosen, the
+    instance still came out with automated backups, point-in-time recovery, deletion protection,
+    *retain backups after deletion* and *final backup on deletion* all **on** — the last two
+    survive the instance and keep billing storage after a teardown. All turned off afterwards and
+    re-verified. `CONSOLE.md` step 4 now lists them explicitly.
+  - **`cloudsqlsuperuser` kept on the `wildalert` user**, which answers the open question from the
+    scripted version: PG15+ dropped the default `CREATE` grant on `public`, and Cloud SQL databases
+    are owned by that role, so Flyway can create its tables. More than least privilege
+    (`CREATEDB`/`CREATEROLE`); splitting it into a migration role + a DML-only app role is a
+    Phase 7 task.
+  - **Prod is PG18, local compose is PG17.** Accepted rather than recreating the instance; the
+    migrations are plain DDL. Bumping local would need the `pgdata` volume wiped.
+  - **DB connection is config-only:** the Cloud SQL Java connector is named as the JDBC
+    `socketFactory` in `DATABASE_URL`, so the only code change was one `runtimeOnly` dependency
+    (`com.google.cloud.sql:postgres-socket-factory:1.28.4`). No password over TCP, no IP allowlist.
+  - **Private service:** deploy with **Require authentication**, because it serves hunters' phone
+    numbers; verify with `gcloud auth print-identity-token`. `roles/run.invoker` for the other
+    services comes when they deploy.
+  - The Cloud Run **startup probe points at `/actuator/health/readiness`**, so a revision only goes
+    live once Flyway has run and Cloud SQL is reachable — the payoff from slice 1.
+  - **The shell scripts were deleted.** `00-bootstrap.sh`, `10-cloudsql.sh`,
+    `20-deploy-user-account.sh`, `99-teardown.sh` and `config.sh` are gone now that the console is
+    the workflow: an unrun script drifts (that `config.sh` still said `POSTGRES_17` after the
+    instance was built as 18) and then misleads. Their settings live in `deploy/README.md`; teardown
+    is a documented console checklist. `deploy/cloudbuild.yaml` stays — the console cannot build an
+    image. If this outgrows clicking, the answer is OpenTofu, not shell.
+  - **Default compute service account still holds `roles/editor`**, and it is what Cloud Build runs
+    as (`wildalert-prod` has no parent org, so Google's automatic-grant restriction never applied).
+    Left alone deliberately so the first build works; stripping it with explicit build roles is a
+    Phase 7 task in `ROADMAP.md`.
+  - **Cost:** $0.01/hour ≈ **$9/month** for the instance, billed while it exists whether queried or
+    not. Delete it between work sessions — Cloud Run at min-instances 0 is free idle.
+
 ## Remaining Phase 6 work
-- Managed Postgres (Cloud SQL vs Neon/Supabase), broker decision (managed Kafka vs **Pub/Sub
-  push** — see the scale-to-zero trade-off in ROADMAP Open Decisions), deploy the containers to
-  Cloud Run, Secret Manager + env separation, domain + Cloudflare Email Routing catch-all with an
-  Email Worker that POSTs the raw email plus `?envelopeTo=` and the webhook secret header.
+- **Build the user-account image** (Cloud Shell + `deploy/cloudbuild.yaml` — needs the
+  socket-factory dependency committed first) and **deploy it to Cloud Run** via `CONSOLE.md` step 9,
+  then confirm a hunter can be created against Cloud SQL.
+- **Broker decision — the one with real cost attached:** managed Kafka vs **Cloud Pub/Sub push**.
+  The recognition worker is a pull consumer holding a multi-GB model, so on Cloud Run it cannot
+  scale to zero (see the trade-off in ROADMAP Open Decisions). Everything else waits on this.
+- Deploy the other three services; grant them `roles/run.invoker` on user-account.
+- Domain + Cloudflare Email Routing catch-all, with an Email Worker that POSTs the raw email plus
+  `?envelopeTo=` and the `WEBHOOK_SECRET` header. Until then `INBOUND_EMAIL_DOMAIN` is a
+  placeholder, so inbound addresses generated in the cloud will need regenerating.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
@@ -174,6 +224,7 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
 
 ## Tech stack
 Kotlin + Spring Boot (Web, JPA, Flyway, Validation, Spring Kafka, RestClient), JDK 25 ·
-Python 3.12 + FastAPI + PyTorch-Wildlife (DeepFaune/MegaDetector) · Postgres 17 ·
+Python 3.12 + FastAPI + PyTorch-Wildlife (DeepFaune/MegaDetector) · Postgres 17 local /
+18 on Cloud SQL ·
 Apache Kafka 3.8 · Cloudflare R2 (S3 SDK) · Twilio · Docker (Engine in WSL2 locally, managed
 cloud in prod).
