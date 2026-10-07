@@ -45,13 +45,14 @@ The console cannot build it, so this runs in **Cloud Shell** (the `>_` icon, top
 
 ```bash
 git clone https://github.com/zvolda/wildalert.git
-cd wildalert && git checkout initialsetup
+cd wildalert   # main is the default branch
 
-IMAGE="europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account:$(git rev-parse --short HEAD)"
+BASE="europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account"
+SHA="$(git rev-parse --short HEAD)"
 gcloud builds submit --config deploy/cloudbuild.yaml \
-  --substitutions="_SERVICE=user-account,_IMAGE=${IMAGE}" .
+  --substitutions="_SERVICE=user-account,_IMAGE_BASE=${BASE},SHORT_SHA=${SHA}" .
 
-echo "$IMAGE"   # the exact string to paste into the Cloud Run form
+echo "${BASE}:${SHA}"   # the exact string to paste into the Cloud Run form
 ```
 
 **Commit and push before building.** Cloud Shell builds what is on GitHub, so uncommitted work is
@@ -65,7 +66,18 @@ hence `E2_HIGHCPU_8` and the 30-minute timeout.
 
 The build runs as the **default compute service account**, which still holds `roles/editor`. That is
 why it needs no extra IAM grants, and why stripping that binding is a Phase 7 task in `ROADMAP.md`:
-do it *after* the first green deploy, with explicit build roles in its place, or builds break.
+do it *after* the first green deploy, with explicit build roles in its place, or builds break. A
+dedicated `wildalert-cloudbuild` account needs only `roles/artifactregistry.writer` (push the image)
+and `roles/logging.logWriter` (write build logs) — build-time rights stay separate from the
+service's runtime identity, which can reach the database but must never be able to publish images.
+
+**`gradlew` is committed without its execute bit** (it was added from Windows), so every Dockerfile
+runs `chmod +x gradlew` before `./gradlew`; without it the build dies at `./gradlew: Permission
+denied` (exit 126). `git update-index --chmod=+x gradlew` fixes it at the source if you prefer.
+
+**The image tag comes from `$SHORT_SHA` inside `cloudbuild.yaml`**, not from a substitution field —
+Cloud Build does not expand built-ins inside the value of a user substitution, so `_IMAGE` set to
+`...:$SHORT_SHA` fails with `could not parse reference`. The trigger passes `_IMAGE_BASE` (no tag).
 
 ## What it costs
 
