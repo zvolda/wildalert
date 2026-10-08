@@ -17,7 +17,7 @@ data class HunterContact(
 /**
  * Calls the user-account service to get a hunter's phone number. A 404 (hunter deleted since the
  * photo arrived) maps to null. Any other failure — e.g. user-account down — is thrown on purpose,
- * so the Kafka listener retries the event instead of silently dropping the hunter's alert.
+ * so the push returns 5xx and Pub/Sub redelivers, instead of silently dropping the hunter's alert.
  */
 @Component
 class HunterClient(

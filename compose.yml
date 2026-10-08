@@ -1,8 +1,14 @@
 # Local development infrastructure — run with:  docker compose up -d
 # (inside your WSL2 Ubuntu, where the free Docker Engine runs).
 #
-# Provides Postgres (used from Phase 1) and Kafka + a Kafka UI (used from Phase 5).
-# Nothing here is used in production — prod uses managed cloud services.
+# Provides Postgres (used from Phase 1) and the Cloud Pub/Sub emulator with the topics and
+# subscriptions the services expect. Nothing here is used in production — prod uses managed cloud
+# services (the same Pub/Sub, for real).
+#
+# IMPORTANT: the services must run in the *same WSL2 session* as this compose file. The emulator
+# delivers events by POSTing to them via host.docker.internal, which resolves to the Docker host —
+# your WSL2 Ubuntu, not Windows. Also start uvicorn with --host 0.0.0.0, or the container cannot
+# reach it.
 
 services:
   postgres:
@@ -22,36 +28,90 @@ services:
       timeout: 5s
       retries: 5
 
-  kafka:
-    image: apache/kafka:3.8.0
-    container_name: wildalert-kafka
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    container_name: wildalert-pubsub
+    # --host-port=0.0.0.0 matters: the emulator binds IPv6 localhost by default and would be
+    # unreachable from outside the container.
+    command: >
+      gcloud beta emulators pubsub start
+      --project=wildalert-local
+      --host-port=0.0.0.0:8085
     ports:
-      # Host apps connect on localhost:29092; other containers use kafka:9092.
-      - "29092:29092"
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      - "8085:8085"
+    extra_hosts:
+      # Docker Engine (unlike Docker Desktop) does not define host.docker.internal, and without it
+      # the emulator cannot push events to the services running on the host.
+      - "host.docker.internal:host-gateway"
 
-  kafka-ui:
-    image: kafbat/kafka-ui:latest
-    container_name: wildalert-kafka-ui
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+  # One-shot provisioning. `gcloud pubsub` does NOT talk to the emulator, so this uses the
+  # emulator's REST API directly. PUT is idempotent, so `docker compose up` can be re-run.
+  # Note the emulator has no UpdateSubscription: to change a push URL, delete the subscription
+  # first (DELETE /v1/projects/wildalert-local/subscriptions/<name>).
+  pubsub-init:
+    image: curlimages/curl:latest
+    container_name: wildalert-pubsub-init
     depends_on:
-      - kafka
+      - pubsub
+    environment:
+      P: wildalert-local
+      E: http://pubsub:8085
+      RECOGNITION: http://host.docker.internal:8084/events/image-received
+      NOTIFICATION: http://host.docker.internal:8082/api/events/animal-recognized
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "waiting for the emulator..."
+        until curl -sf "$$E/v1/projects/$$P/topics" >/dev/null; do sleep 1; done
+
+        for t in image.received image.received.dlt animal.recognized animal.recognized.dlt; do
+          curl -sf -X PUT "$$E/v1/projects/$$P/topics/$$t" \
+            -H 'Content-Type: application/json' -d '{}' >/dev/null
+          echo "topic $$t"
+        done
+
+        # Push subscriptions. No oidcToken: the emulator has no IAM and plain http endpoints are
+        # allowed. maxDeliveryAttempts/minimumBackoff mirror the real subscriptions so local
+        # behaviour matches prod; the emulator does forward to dead-letter topics.
+        curl -sf -X PUT "$$E/v1/projects/$$P/subscriptions/image.received.recognition" \
+          -H 'Content-Type: application/json' -d '{
+            "topic": "projects/'"$$P"'/topics/image.received",
+            "pushConfig": { "pushEndpoint": "'"$$RECOGNITION"'" },
+            "ackDeadlineSeconds": 600,
+            "retryPolicy": { "minimumBackoff": "10s", "maximumBackoff": "600s" },
+            "deadLetterPolicy": {
+              "deadLetterTopic": "projects/'"$$P"'/topics/image.received.dlt",
+              "maxDeliveryAttempts": 5
+            }}' >/dev/null
+        echo "subscription image.received.recognition -> $$RECOGNITION"
+
+        curl -sf -X PUT "$$E/v1/projects/$$P/subscriptions/animal.recognized.notification" \
+          -H 'Content-Type: application/json' -d '{
+            "topic": "projects/'"$$P"'/topics/animal.recognized",
+            "pushConfig": { "pushEndpoint": "'"$$NOTIFICATION"'" },
+            "ackDeadlineSeconds": 60,
+            "retryPolicy": { "minimumBackoff": "10s", "maximumBackoff": "600s" },
+            "deadLetterPolicy": {
+              "deadLetterTopic": "projects/'"$$P"'/topics/animal.recognized.dlt",
+              "maxDeliveryAttempts": 5
+            }}' >/dev/null
+        echo "subscription animal.recognized.notification -> $$NOTIFICATION"
+
+        # Pull subscriptions on the dead-letter topics. Without these the DLTs would DISCARD
+        # everything sent to them — a topic with no subscription drops messages — and the whole
+        # "nothing is lost" property would be a fiction. Pull them to inspect failures:
+        #   curl -X POST $$E/v1/projects/$$P/subscriptions/image.received.dlt.inspect:pull \
+        #     -H 'Content-Type: application/json' -d '{"maxMessages":10}'
+        for t in image.received animal.recognized; do
+          curl -sf -X PUT "$$E/v1/projects/$$P/subscriptions/$$t.dlt.inspect" \
+            -H 'Content-Type: application/json' -d '{
+              "topic": "projects/'"$$P"'/topics/'"$$t"'.dlt"
+            }' >/dev/null
+          echo "subscription $$t.dlt.inspect"
+        done
+
+        echo "pub/sub emulator ready: 4 topics, 4 subscriptions"
 
 volumes:
   pgdata:

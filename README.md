@@ -15,7 +15,7 @@ services/
   notification/     # Kotlin/Spring Boot — sends SMS via Twilio
   email-ingestion/  # Kotlin/Spring Boot — parse email, store image, emit ImageReceived
   recognition/      # Python/FastAPI — classifies the animal (DeepFaune)
-compose.yml         # local dev infra: Postgres + Kafka + Kafka UI
+compose.yml         # local dev infra: Postgres + Cloud Pub/Sub emulator
 ```
 
 The recognition service (Python + DeepFaune) lives outside the Gradle build.
@@ -24,7 +24,7 @@ The recognition service (Python + DeepFaune) lives outside the Gradle build.
 
 - **JDK 25** (already installed). Gradle is provided via the wrapper (`./gradlew`) —
   no separate install needed.
-- **Docker Engine in WSL2** for local Postgres/Kafka. We deliberately avoid Docker
+- **Docker Engine in WSL2** for local Postgres and the Pub/Sub emulator. We deliberately avoid Docker
   Desktop (company licensing) and use the free, Apache-2.0 Docker Engine instead.
 
 ### One-time WSL2 + Docker Engine setup
@@ -64,8 +64,13 @@ docker compose up -d
 ```
 
 - Postgres → `localhost:5432` (user/password/db: `wildalert`)
-- Kafka → `localhost:29092`
-- Kafka UI → http://localhost:8080
+- Pub/Sub emulator → `localhost:8085`, project `wildalert-local`, with the four topics and four
+  subscriptions created for you (see `compose.yml`)
+
+The emulator *pushes* events to the services over HTTP, so **run them in the same WSL2 session as
+compose** and start uvicorn with `--host 0.0.0.0` — otherwise it cannot reach them. Turn the real
+transport on with the `pubsub` Spring profile (`SPRING_PROFILES_ACTIVE=pubsub`); without it every
+service uses its logging fake and needs no broker at all.
 
 Build everything:
 

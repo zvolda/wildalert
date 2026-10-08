@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service
 
 /**
  * Turns a recognition result into an SMS: find the hunter, apply the SMS policy, send.
- * Independent of Kafka — the listener just calls [notify] for each event.
+ * Independent of the transport — the push controller just calls [notify] for each event.
  */
 @Service
 class NotificationService(

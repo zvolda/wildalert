@@ -38,6 +38,36 @@ gets entered.
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
 
+### Pub/Sub (not provisioned yet — the code and local emulator are done)
+
+Events move on **Cloud Pub/Sub push subscriptions**: Pub/Sub POSTs each event to an HTTP endpoint,
+so the consumers need no client library and still scale to zero. Dead-letter topics use a `.dlt`
+suffix, matching the names the local emulator creates in `compose.yml`.
+
+| Resource | Value |
+|---|---|
+| Topics | `image.received`, `animal.recognized`, `image.received.dlt`, `animal.recognized.dlt` |
+| Push subscription → recognition | `image.received.recognition` → `POST <recognition-url>/events/image-received`, ack deadline **600s**, retry backoff 10s–600s, dead-letter → `image.received.dlt` after **5** attempts |
+| Push subscription → notification | `animal.recognized.notification` → `POST <notification-url>/api/events/animal-recognized`, ack deadline **60s**, same retry, dead-letter → `animal.recognized.dlt` after **5** attempts |
+| Dead-letter subscriptions | `image.received.dlt.inspect`, `animal.recognized.dlt.inspect` — plain pull |
+| Push identity | `wildalert-pubsub-push@wildalert-prod.iam.gserviceaccount.com`, no keys, `roles/run.invoker` **per service** |
+| Publisher identities | `wildalert-email-ingestion@…` on `image.received`, `wildalert-recognition@…` on `animal.recognized` — `roles/pubsub.publisher` granted **on the topic**, not the project |
+| Pub/Sub service agent | `service-789527844011@gcp-sa-pubsub.iam.gserviceaccount.com` needs `roles/iam.serviceAccountTokenCreator` **on the push service account**, plus publisher on the `.dlt` topics and subscriber on the two source subscriptions |
+
+Two things that are easy to get wrong:
+
+- **A topic with no subscription discards everything published to it.** Without the two
+  `.dlt.inspect` pull subscriptions, dead-lettering writes into the void and "nothing is lost" is
+  a fiction.
+- **Both consumers keep ingress `Internal`.** Pub/Sub push is one of the few sources that can
+  reach an internal-ingress Cloud Run service, so they never need a public URL. Authentication is
+  Cloud Run's job (the push subscription sends a Google-signed OIDC token); the apps deliberately
+  do not verify the JWT themselves, because only the push account holds `run.invoker`.
+
+Cloud Run settings that matter for push: recognition needs **request timeout 600s** (to match the
+ack deadline) and startup CPU boost; the model is loaded at startup, so the startup probe holds
+traffic until the weights are in memory.
+
 ## Building the image
 
 The console cannot build it, so this runs in **Cloud Shell** (the `>_` icon, top right — it has
@@ -88,6 +118,8 @@ Cloud Build does not expand built-ins inside the value of a user substitution, s
 - **Cloud Run is effectively free here.** Min instances 0 means an idle service costs nothing; you
   pay only for CPU and memory while a request is being served.
 - **Artifact Registry and Secret Manager** are fractions of a cent at this size.
+- **Pub/Sub is free** at this volume — the free tier covers 10 GiB/month and a few trail-cam
+  photos a day is nowhere near it.
 
 So tear the database down when you stop for a while — see *Teardown*.
 

@@ -3,5 +3,6 @@ uvicorn[standard]==0.52.4
 python-multipart==0.0.32
 # S3 API client — reads stored images from Cloudflare R2 (RECOGNITION_IMAGE_SOURCE=r2)
 boto3==1.43.94
-# Kafka client (librdkafka) — the worker consumes image.received and publishes animal.recognized
-confluent-kafka==2.15.1
+# Cloud Pub/Sub client — publishes animal.recognized (RECOGNITION_EVENTS_PROVIDER=pubsub).
+# Honours PUBSUB_EMULATOR_HOST, so local dev needs no credentials.
+google-cloud-pubsub==2.42.0

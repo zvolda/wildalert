@@ -60,7 +60,7 @@ def _load_deepfaune() -> Classifier:
 
 def get_classifier() -> Classifier:
     """Provides the configured classifier: the real DeepFaune model or the fake stub. Shared by
-    the HTTP API and the Kafka worker."""
+    /recognize and the Pub/Sub push endpoint."""
     if get_settings().classifier == "deepfaune":
         return _load_deepfaune()
     return StubClassifier()

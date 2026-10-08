@@ -8,8 +8,8 @@ Trail-cam email → recognize the animal (mostly B/W infrared night photos) → 
 Event-driven microservices: Kotlin/Spring Boot + one Python recognition service.
 
 ```
-Email → email-ingestion (Kotlin) --ImageReceived--> Kafka
-           → recognition (Python/DeepFaune) --AnimalRecognized--> Kafka
+Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
+           → recognition (Python/DeepFaune) --AnimalRecognized--> Pub/Sub
                 → notification (Kotlin) → SMS (Twilio)
      user-account (Kotlin) — email→phone mapping, shared Postgres
 ```
@@ -24,26 +24,31 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Kafka
 ## Core conventions
 - **Swappable-interface pattern with a fake default, real impl chosen by config.** Examples:
   `ImageStore` (logging / R2), `SmsSender` (logging / Twilio), `EventPublisher`
-  (logging / kafka), `Classifier` (stub / deepfaune). New integrations should follow this:
+  (logging / pubsub), `Classifier` (stub / deepfaune). New integrations should follow this:
   interface + fake default + real impl gated by a config property, so the app runs with zero
   infra and tests use the fake.
 - **Config via env vars with defaults**, bound in `application.yml` (`${VAR:default}`) and
   read through `@Value` / `@ConfigurationProperties` (Kotlin) or `os.getenv` (Python).
-- **Events are broker-agnostic JSON** so Kafka can be swapped for managed Kafka / Cloud
-  Pub/Sub in prod. Events carry an `eventId` for future idempotency.
+- **Events are broker-agnostic JSON** — the transport is **Cloud Pub/Sub**, and the consumers are
+  plain HTTP endpoints receiving push subscriptions, so no consumer needs a Pub/Sub client at all.
+  Events carry an `eventId`; delivery is at-least-once, and notification dedupes on
+  `sourceEventId`.
 
 ## Build & test
 - **Kotlin services** (JDK 25, Gradle wrapper):
   - `./gradlew :services:<name>:test` — run a service's tests
-  - `./gradlew :services:<name>:bootRun` — run it (add `--args='--events.provider=kafka'` etc.)
+  - `./gradlew :services:<name>:bootRun` — run it (`SPRING_PROFILES_ACTIVE=pubsub` for the real
+    transport; the `pubsub` profile sets `events.provider` and the GCP auto-configuration together,
+    which must stay off by default or startup requires GCP credentials)
   - `@SpringBootTest contextLoads` runs without external infra (producers/clients are lazy).
 - **Recognition service** (Python 3.12+; venv in `services/recognition/.venv`):
   - `cd services/recognition && pytest` — tests run against the **stub** classifier (no ML deps)
   - The real DeepFaune model runs only in the Docker image
     (`docker build -t wildalert-recognition services/recognition`); it needs Python 3.12
     (torch has no 3.14 wheels) and is enabled by `RECOGNITION_CLASSIFIER=deepfaune`.
-- **Local infra:** `docker compose up -d` (Postgres + Kafka + Kafka UI). Docker Engine runs in
-  WSL2 (no Docker Desktop).
+- **Local infra:** `docker compose up -d` (Postgres + the Pub/Sub emulator, topics and
+  subscriptions included). Docker Engine runs in WSL2 (no Docker Desktop). Because the emulator
+  pushes over HTTP, run the services in that same WSL2 session and bind uvicorn to `0.0.0.0`.
 
 ## Local-dev environment gotchas (this machine)
 - WSL2 shuts the distro down between separate shell invocations, killing running containers —

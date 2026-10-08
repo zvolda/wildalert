@@ -1,0 +1,26 @@
+# The 'pubsub' profile: the single switch that turns on real event publishing.
+#
+#   SPRING_PROFILES_ACTIVE=pubsub ./gradlew :services:email-ingestion:bootRun
+#
+# It flips both halves together — the provider that selects PubSubEventPublisher, and the Spring
+# Cloud GCP auto-configuration it needs. Keeping them in one profile means they can't drift apart,
+# which matters because enabling the auto-configuration without credentials available fails startup.
+#
+# Two settings deliberately come from the environment rather than from here, because an
+# empty-but-present value would be worse than an absent one:
+#
+#   SPRING_CLOUD_GCP_PROJECT_ID          — in the cloud this resolves from the metadata server;
+#                                          locally set it to the emulator's project (wildalert-local)
+#   SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST — local dev only (localhost:8085). When set, it also
+#                                          activates PubSubCredentialsConfig, which is why it must
+#                                          be genuinely unset in the cloud.
+events:
+  provider: pubsub
+
+spring:
+  cloud:
+    gcp:
+      core:
+        enabled: true
+      pubsub:
+        enabled: true
