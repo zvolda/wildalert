@@ -173,10 +173,30 @@ Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Kafka]
   - **Cost:** $0.01/hour ≈ **$9/month** for the instance, billed while it exists whether queried or
     not. Delete it between work sessions — Cloud Run at min-instances 0 is free idle.
 
+- **Slice 3 (done, 2026-10-08): user-account is live in Google Cloud.** Image built by a **Cloud
+  Build trigger** on `main` (GitHub App connection, `deploy/cloudbuild.yaml`, tag from `$SHORT_SHA`)
+  and deployed to **Cloud Run** `user-account` in europe-west3 through the console: private
+  (**Require authentication** → IAM, not IAP), min/max instances 0/3, 1 vCPU / 1 GiB,
+  `wildalert-user-account` service account, Cloud SQL connection attached, `POSTGRES_PASSWORD` from
+  Secret Manager, startup probe on `/actuator/health/readiness`.
+  - URL `https://user-account-lznkorfm4q-ey.a.run.app`, revision `user-account-00001-bl4`, image
+    `…/user-account:345dc61` (`sha256:15894444e817…`).
+  - **Verified against the running service:** no token → 403; `/actuator/health`,
+    `/readiness`, `/liveness` → UP; `/actuator/env` → 404; `POST /api/hunters` created a hunter with
+    an `inboundAddress`; `GET` by id, by-email (uppercase input normalised) and by-inbound-address
+    all returned it; unknown email → 404. **Readiness UP is the proof the DB works** — Flyway ran
+    both migrations as `wildalert` and `cloudsqlsuperuser` was enough for `public`, which closes the
+    open question from slice 2.
+  - **Two build failures worth remembering:** `gradlew` is committed `100644` (added from Windows),
+    so `./gradlew` in the Linux build image was `Permission denied` (exit 126) — every Dockerfile now
+    runs `chmod +x gradlew` first. And Cloud Build does **not** expand built-ins inside a user
+    substitution's value, so `_IMAGE=…:$SHORT_SHA` failed with `could not parse reference`; the tag
+    is now built inside `cloudbuild.yaml` from `_IMAGE_BASE` + `$SHORT_SHA`.
+  - **Known gap:** the trigger runs as the **default compute service account** (still `roles/editor`).
+    A dedicated `wildalert-cloudbuild` with only `artifactregistry.writer` + `logging.logWriter` is
+    the fix, deliberately deferred to Phase 7 so the first deploy wasn't two problems at once.
+
 ## Remaining Phase 6 work
-- **Build the user-account image** (Cloud Shell + `deploy/cloudbuild.yaml` — needs the
-  socket-factory dependency committed first) and **deploy it to Cloud Run** via `CONSOLE.md` step 9,
-  then confirm a hunter can be created against Cloud SQL.
 - **Broker decision — the one with real cost attached:** managed Kafka vs **Cloud Pub/Sub push**.
   The recognition worker is a pull consumer holding a multi-GB model, so on Cloud Run it cannot
   scale to zero (see the trade-off in ROADMAP Open Decisions). Everything else waits on this.
