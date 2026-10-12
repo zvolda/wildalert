@@ -230,8 +230,35 @@ longer exist in the repo, but what each slice proved still holds._
     exists with `events.provider=pubsub` and does *not* without it); 33 Python tests green. The
     ported `AnimalRecognizedPushControllerTest` still asserts the **same captured JSON** from the
     Python service, which is what keeps the hand-duplicated contracts honest.
-  - **Not yet verified:** the end-to-end chain against the emulator, and the no-credentials boot
-    check — both need a single WSL2 session with the services running.
+  - **Containerised local run.** `compose.yml` gained a **`local` profile** with all four services,
+    so the emulator reaches them by container name — no host networking at all. The Kotlin services
+    run a plain `eclipse-temurin:25-jre` image over the host-built bootJar (no image build; the
+    Gradle cache does the compiling), and recognition has a slim `Dockerfile.local` with the stub
+    classifier, so it builds in seconds instead of pulling several GB of torch and weights.
+    `docker compose up -d` is still infra-only; `docker compose --profile local up -d --build` runs
+    the pipeline. This was chosen over running the services on the host because **WSL has no JDK**
+    and the Python venv is Windows-side, so `host.docker.internal` had nothing to reach.
+  - **Verified end-to-end in WSL (2026-10-09), containers only:**
+    - **Happy path:** raw forwarded email → email-ingestion stored the image and published
+      `ImageReceived` → emulator pushed to recognition (`POST /events/image-received`) → published
+      `AnimalRecognized` → pushed to notification → `[FAKE SMS] … "WildAlert: wild boar detected
+      (97% confidence)"`. The whole chain, on the real transport.
+    - **Poison path:** garbage published straight to `image.received` → recognition answered **400**
+      five times → the message arrived in `image.received.dlt` with its original bytes and
+      `CloudPubSubDeadLetterSourceDeliveryCount: 5`, pulled from `image.received.dlt.inspect`. So
+      Pub/Sub's retry + dead-letter config really does replace the hand-written loop, and the
+      inspect subscriptions really are what stops the DLT discarding messages.
+    - **Idempotency:** the same `AnimalRecognized` pushed twice → **2 pushes received, 1 SMS sent**,
+      one `notification.processed_event` row, and the second logged "source event … was already
+      handled (duplicate delivery)". (A first attempt at this test was invalid — the event had
+      `hunterId: null`, so notification short-circuits before claiming and no SMS is attempted
+      either way.)
+  - **Fixed while verifying:** removing `worker.py` removed the only `logging.basicConfig` call, so
+    the Python service's own INFO lines (push endpoint, publisher) were being dropped — uvicorn
+    configures only its own loggers. `app/main.py` now sets it up (`LOG_LEVEL`, default INFO).
+  - **Still not verified:** the no-credentials boot check (plan step 7) — the containers never have
+    ADC, so email-ingestion starting there is weak evidence for it, but the host case with the
+    `pubsub` profile *off* has not been exercised deliberately.
 
 ## Remaining Phase 6 work
 - **Provision Pub/Sub in GCP** (the code side is done — slice 4 below): 4 topics

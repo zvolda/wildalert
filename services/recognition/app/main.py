@@ -9,6 +9,7 @@ RECOGNITION_CLASSIFIER=deepfaune.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, UploadFile
@@ -21,6 +22,14 @@ from app.classifier import (
 )
 from app.config import Settings, get_settings
 from app.push import router as push_router
+
+# uvicorn configures only its own loggers, so without this the service's own INFO lines (the push
+# endpoint, the publisher) are dropped by the root logger's default WARNING level — the Kafka worker
+# used to call basicConfig in its main().
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 log = logging.getLogger("recognition")
 

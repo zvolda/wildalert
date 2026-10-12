@@ -5,10 +5,17 @@
 # subscriptions the services expect. Nothing here is used in production — prod uses managed cloud
 # services (the same Pub/Sub, for real).
 #
-# IMPORTANT: the services must run in the *same WSL2 session* as this compose file. The emulator
-# delivers events by POSTing to them via host.docker.internal, which resolves to the Docker host —
-# your WSL2 Ubuntu, not Windows. Also start uvicorn with --host 0.0.0.0, or the container cannot
-# reach it.
+# Two ways to run the pipeline:
+#
+#   docker compose up -d                        # infra only (Postgres + Pub/Sub emulator)
+#   docker compose --profile local up -d --build # infra + all four services, in containers
+#
+# The second form is the easy one, and the reason is the emulator: it delivers events by POSTing to
+# the services, so it has to be able to reach them. Inside the compose network it reaches them by
+# container name and nothing else is needed. If you would rather run the services on your machine
+# (./gradlew bootRun, uvicorn), they must listen where the emulator can find them: run them in the
+# same WSL2 session as compose, bind uvicorn to 0.0.0.0, and point the two endpoints below at
+# host.docker.internal (which `extra_hosts` on the emulator makes resolvable).
 
 services:
   postgres:
@@ -56,8 +63,10 @@ services:
     environment:
       P: wildalert-local
       E: http://pubsub:8085
-      RECOGNITION: http://host.docker.internal:8084/events/image-received
-      NOTIFICATION: http://host.docker.internal:8082/api/events/animal-recognized
+      # Container names, for the --profile local services below. Running the services on the host
+      # instead? Override these with http://host.docker.internal:8084/... and :8082/...
+      RECOGNITION: ${PUSH_RECOGNITION_URL:-http://recognition:8084/events/image-received}
+      NOTIFICATION: ${PUSH_NOTIFICATION_URL:-http://notification:8082/api/events/animal-recognized}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -112,6 +121,104 @@ services:
         done
 
         echo "pub/sub emulator ready: 4 topics, 4 subscriptions"
+
+  # ---------------------------------------------------------------------------------------------
+  # The services themselves, under the `local` profile so plain `docker compose up` stays infra-only.
+  #
+  #   ./gradlew build                                # the Kotlin images mount the jars you just built
+  #   docker compose --profile local up -d --build
+  #
+  # The Kotlin services run a plain JRE image over the host-built bootJar: no image build, and your
+  # Gradle cache does the compiling. (The glob skips the `-plain` jar, which has no dependencies.)
+  # ---------------------------------------------------------------------------------------------
+
+  user-account:
+    image: eclipse-temurin:25-jre
+    container_name: wildalert-user-account
+    profiles: ["local"]
+    command: sh -c 'java -jar $$(ls /app/*.jar | grep -v plain | head -1)'
+    volumes:
+      - ./services/user-account/build/libs:/app:ro
+    environment:
+      PORT: 8081
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-in.wildalert.local}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notification:
+    image: eclipse-temurin:25-jre
+    container_name: wildalert-notification
+    profiles: ["local"]
+    command: sh -c 'java -jar $$(ls /app/*.jar | grep -v plain | head -1)'
+    volumes:
+      - ./services/notification/build/libs:/app:ro
+    environment:
+      PORT: 8082
+      # Turns on the push endpoint (application-pubsub.yml). No Pub/Sub client needed here.
+      SPRING_PROFILES_ACTIVE: pubsub
+      USER_ACCOUNT_BASE_URL: http://user-account:8081
+      # Durable idempotency, so redelivery can't send a second SMS even across restarts.
+      IDEMPOTENCY_STORE: postgres
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SMS_PROVIDER: logging
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  email-ingestion:
+    image: eclipse-temurin:25-jre
+    container_name: wildalert-email-ingestion
+    profiles: ["local"]
+    command: sh -c 'java -jar $$(ls /app/*.jar | grep -v plain | head -1)'
+    volumes:
+      - ./services/email-ingestion/build/libs:/app:ro
+      - ./data/images:/data/images
+    environment:
+      PORT: 8083
+      # Publishes for real (application-pubsub.yml + the GCP auto-configuration it needs).
+      SPRING_PROFILES_ACTIVE: pubsub
+      SPRING_CLOUD_GCP_PROJECT_ID: wildalert-local
+      SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST: pubsub:8085
+      USER_ACCOUNT_BASE_URL: http://user-account:8081
+      STORAGE_PROVIDER: filesystem
+      STORAGE_FILESYSTEM_ROOT: /data/images
+    ports:
+      - "8083:8083"
+    depends_on:
+      - pubsub
+
+  recognition:
+    build:
+      context: ./services/recognition
+      # The slim local image: stub classifier, no torch, no model weights. ./Dockerfile is the real
+      # one (several GB) if you want to exercise DeepFaune.
+      dockerfile: Dockerfile.local
+    container_name: wildalert-recognition
+    profiles: ["local"]
+    volumes:
+      - ./data/images:/data/images:ro
+    environment:
+      PORT: 8084
+      RECOGNITION_EVENTS_PROVIDER: pubsub
+      PUBSUB_EMULATOR_HOST: pubsub:8085
+      PUBSUB_PROJECT_ID: wildalert-local
+      RECOGNITION_IMAGE_SOURCE: local
+      RECOGNITION_IMAGE_ROOT: /data/images
+      RECOGNITION_CLASSIFIER: stub
+    ports:
+      - "8084:8084"
+    depends_on:
+      - pubsub
 
 volumes:
   pgdata:
