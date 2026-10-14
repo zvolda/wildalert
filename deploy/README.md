@@ -34,7 +34,7 @@ gets entered.
 | Password secret | `wildalert-db-password` (global secret, automatic replication) |
 | Service account | `wildalert-user-account@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor` — nothing else |
-| `INBOUND_EMAIL_DOMAIN` | `in.wildalert.local` — placeholder until the real domain exists |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.local` — placeholder until `wildalert.app` is registered; then the **apex**, not a subdomain |
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
 

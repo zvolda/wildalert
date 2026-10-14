@@ -224,7 +224,7 @@ then the async flow, then deploy, then scale.
   - [x] Consumer logic in a transport-free `handle(event)`; the transport is a thin adapter
         (which is what made replacing Kafka with Pub/Sub push a small change)
   - [ ] End-to-end: forwarded email → recognized → SMS delivered
-  - [ ] **Per-hunter inbound address** (e.g. `jan-7f3k9q@in.wildalert.app`): match the hunter by
+  - [ ] **Per-hunter inbound address** (e.g. `7f3k9q2mx4ab@wildalert.app`): match the hunter by
         the email's **recipient**, not its `From` header — auto-forwarding rules keep the camera's
         address in `From`, and cameras can email us directly. user-account: `inbound_token`
         column (Flyway V2; address = token@`INBOUND_EMAIL_DOMAIN`), generated on register,
@@ -246,8 +246,14 @@ then the async flow, then deploy, then scale.
         Code + local emulator done; topics, subscriptions and IAM still to provision.
   - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible
   - [ ] Warm the recognition model at startup (reduce cold-start delay)
-  - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion — **catch-all** on the
-        inbound subdomain (`*@in.<domain>`) so every hunter's personal address reaches the webhook
+  - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion — **catch-all on the
+        apex** (`*@<domain>`) so every hunter's personal address reaches the webhook, via the
+        Email Worker in `deploy/email-worker/`. **Not a subdomain:** Cloudflare offers a
+        catch-all on the apex only; a subdomain needs one explicit routing rule per address,
+        which would put a Cloudflare API call inside hunter registration. Explicit custom
+        addresses still beat the catch-all, so `hello@<domain>` can forward to a real mailbox.
+        Consequence: the apex MX belongs to Cloudflare, so no other mail provider can host
+        mailboxes there later.
   - [ ] Secrets/config management; environment separation
 - **DoD (review against):** forwarding an email to the real address delivers an SMS in prod;
   no secrets in the repo; services scale to zero when idle.

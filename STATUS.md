@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-09-30. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-14. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -268,9 +268,28 @@ longer exist in the repo, but what each slice proved still holds._
   `wildalert-pubsub-push` account with `roles/run.invoker` per service, and the Pub/Sub service
   agent's `iam.serviceAccountTokenCreator` + dead-letter grants.
 - Deploy the other three services; grant them `roles/run.invoker` on user-account.
-- Domain + Cloudflare Email Routing catch-all, with an Email Worker that POSTs the raw email plus
-  `?envelopeTo=` and the `WEBHOOK_SECRET` header. Until then `INBOUND_EMAIL_DOMAIN` is a
-  placeholder, so inbound addresses generated in the cloud will need regenerating.
+- Domain + Cloudflare Email Routing. **Worker written (2026-10-14): `deploy/email-worker/`** —
+  `src/worker.js` POSTs the raw RFC-822 bytes to `/api/emails?envelopeTo=<message.to>` with the
+  `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README. Untested until
+  email-ingestion has a URL.
+  **`wildalert.app` is registered (2026-10-14, Cloudflare Registrar)** and the zone is served by
+  Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`, verified by `nslookup -type=NS`).
+  At that point the apex had **no MX and no TXT records** — Email Routing had not been enabled, so
+  there was nothing to conflict with. Still to do: enable Email Routing (accept its MX + SPF
+  records), verify a destination address, deploy the worker, point the **apex** catch-all at it,
+  and set `INBOUND_EMAIL_DOMAIN=wildalert.app`.
+  Hunters created before that carry placeholder addresses and need new tokens.
+  - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
+    Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
+    Cloudflare API call during registration. Hunter addresses therefore live on the apex
+    (`<token>@wildalert.app`). Costs nothing in code — `InboundAddresses` reads the domain from
+    config — and human mail still works, because explicit addresses are matched before the
+    catch-all. Price paid: the apex MX is Cloudflare's, so no other provider can host mailboxes
+    on it later.
+  - **email-ingestion must be the one public Cloud Run service.** Workers call in over the public
+    internet, so it cannot use Require authentication / internal ingress like the Pub/Sub
+    consumers; `WebhookAuthFilter`'s shared secret is its protection, which is why that filter was
+    built in slice 1.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
@@ -292,10 +311,10 @@ longer exist in the repo, but what each slice proved still holds._
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
-- **Inbound email webhook not built yet:** matching by recipient is done (slice 5), but the real
-  Cloudflare Email Routing → webhook (an Email Worker that POSTs the raw email with
-  `?envelopeTo=<message.to>`) comes with deploy (Phase 6). Check there which headers Cloudflare
-  actually adds; `envelopeTo` is the reliable path.
+- **Inbound email webhook written but never run:** matching by recipient is done (slice 5) and
+  the Email Worker now exists (`deploy/email-worker/`), but it cannot be deployed until
+  email-ingestion has a Cloud Run URL. `message.to` (the SMTP envelope recipient) is what it
+  sends as `?envelopeTo=`; the email's own headers stay the fallback.
 - **user-account `contextLoads` test needs Postgres running** (`docker compose up -d postgres`);
   unit/web tests don't. It passes from the Windows host once the container is up.
 - **Recognition model load (~1 min)** now happens at **startup** (FastAPI lifespan), so a pushed

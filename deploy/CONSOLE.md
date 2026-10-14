@@ -328,7 +328,7 @@ Environment variables — add three:
 |---|---|
 | `DATABASE_URL` | `jdbc:postgresql:///wildalert?cloudSqlInstance=wildalert-prod:europe-west3:wildalert-db&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
 | `POSTGRES_USER` | `wildalert` |
-| `INBOUND_EMAIL_DOMAIN` | `in.wildalert.local` |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.local` until the domain exists, then `wildalert.app` (the **apex** — see `deploy/email-worker/`) |
 
 Secrets — **Reference a secret**:
 
@@ -498,6 +498,38 @@ curl -X POST "$(gcloud run services describe notification --region europe-west3 
 ```
 
 *Cost: free at this volume (10 GiB/month).*
+
+---
+
+## Step 11b — Domain and inbound email (Cloudflare, not Google)
+
+Do this once email-ingestion is deployed and has a URL. The click-by-click steps, the worker
+code and the verification commands live in **`deploy/email-worker/README.md`** — this is only the
+summary and the two decisions behind it.
+
+1. Register **`wildalert.app`** (Cloudflare Registrar sells at cost; Email Routing needs
+   Cloudflare as the authoritative nameservers either way).
+2. Zone → **Email → Email Routing** → enable, accept the MX/SPF records it offers.
+3. `cd deploy/email-worker && npx wrangler deploy`, then `wrangler secret put INGESTION_URL`
+   and `wrangler secret put WEBHOOK_SECRET` (the same value as email-ingestion's secret).
+4. **Catch-all address → Send to a Worker → `wildalert-email-in`.**
+5. Set `INBOUND_EMAIL_DOMAIN=wildalert.app` on the **user-account** Cloud Run service and
+   deploy a new revision.
+
+**The catch-all is on the apex, not `in.wildalert.app`.** Cloudflare allows catch-all rules on
+the apex only; a subdomain needs one literal routing rule per address, which would mean calling
+the Cloudflare API during hunter registration. Explicit custom addresses are still matched first,
+so `hello@wildalert.app` can forward to your own mailbox.
+
+**email-ingestion is the one service deployed with "Allow unauthenticated".** Cloudflare Workers
+arrive over the public internet, so it cannot sit behind IAM like the Pub/Sub consumers do. Its
+protection is `WebhookAuthFilter` — a 401 unless `X-Webhook-Secret` matches. Verify after deploy:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}
+' -X POST "$(gcloud run services describe email-ingestion --region europe-west3 --format='value(status.url)')/api/emails" --data-binary 'x'
+# 401. A 200 means WEBHOOK_SECRET is unset and the endpoint is open to anyone.
+```
 
 ---
 

@@ -1,0 +1,13 @@
+# Cloudflare Email Worker — see README.md in this folder.
+#
+# Deploy:  npx wrangler deploy          (from this directory)
+# Secrets: npx wrangler secret put INGESTION_URL
+#          npx wrangler secret put WEBHOOK_SECRET
+#
+# Nothing sensitive belongs in this file — it is committed.
+name = "wildalert-email-in"
+main = "src/worker.js"
+compatibility_date = "2026-10-14"
+
+# No routes/triggers here: an Email Worker is invoked by an Email Routing rule, which is
+# configured in the dashboard (Email Routing -> Catch-all -> Send to a Worker), not here.
