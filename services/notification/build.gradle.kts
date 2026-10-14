@@ -30,9 +30,6 @@ dependencies {
     // Twilio SMS provider (used only when sms.provider=twilio)
     implementation("com.twilio.sdk:twilio:13.0.0")
 
-    // Spring Kafka — consumes AnimalRecognized events when events.provider=kafka
-    implementation("org.springframework.kafka:spring-kafka")
-
     // Postgres — remembers handled events so a redelivery can't send a second SMS
     // (only when idempotency.store=postgres; the default in-memory store needs no DB)
     implementation("org.springframework.boot:spring-boot-starter-jdbc")

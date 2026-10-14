@@ -1,7 +1,7 @@
 """The recognition use case, independent of how events arrive.
 
-`handle` knows nothing about Kafka: the worker calls it for each consumed message today, and a
-Pub/Sub push endpoint could call it later without changing this code.
+`handle` knows nothing about the transport: the Pub/Sub push endpoint calls it for each delivered
+message, and it was called by a Kafka worker before that without this code changing.
 """
 
 from app.classifier import Classifier, apply_threshold

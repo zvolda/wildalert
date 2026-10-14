@@ -118,7 +118,7 @@ class NotificationServiceTest {
 
         assertThatThrownBy { retryingService.notify(event) }.isInstanceOf(IllegalStateException::class.java)
         failing.fail = false
-        retryingService.notify(event) // Kafka redelivers the same event
+        retryingService.notify(event) // Pub/Sub redelivers the same event
 
         // The failed attempt must not count as handled, or the hunter would never be told.
         assertThat(failing.sent).hasSize(1)

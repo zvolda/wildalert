@@ -6,7 +6,7 @@ import java.util.UUID
 
 /**
  * Business logic for hunters. Kept separate from the controller so it can be unit-tested
- * without any web layer, and reused later by other entry points (e.g. Kafka consumers).
+ * without any web layer, and reused later by other entry points (e.g. event consumers).
  */
 @Service
 class HunterService(

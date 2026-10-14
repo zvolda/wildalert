@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component
 
 /**
  * Fake EventPublisher that just logs instead of publishing to a broker. Active by default
- * (events.provider=logging or unset), so the app runs end-to-end with no Kafka.
+ * (events.provider=logging or unset), so the app runs end-to-end with no broker.
  */
 @Component
 @ConditionalOnProperty(name = ["events.provider"], havingValue = "logging", matchIfMissing = true)

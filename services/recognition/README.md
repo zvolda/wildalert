@@ -26,23 +26,33 @@ uvicorn app.main:app --reload --port 8084
 - Recognize: `POST /recognize` (multipart image) → `{species, confidence, low_confidence}`
 - Interactive API docs (FastAPI): http://localhost:8084/docs
 
-## Kafka worker
+## Pub/Sub push endpoint
 
-The same code also runs as a Kafka worker: it consumes `ImageReceived` from `image.received`,
-fetches the image by its storage key, classifies it and publishes `AnimalRecognized` to
-`animal.recognized`.
+`POST /events/image-received` is where events arrive: Cloud Pub/Sub pushes an `ImageReceived`, the
+service fetches the image by its storage key, classifies it and publishes `AnimalRecognized` to
+`animal.recognized`. There is no separate worker process — one FastAPI app serves both this and
+`/recognize`.
 
-```bash
-python -m app.worker
-```
+**The HTTP status is the acknowledgement**, so the retry and dead-letter policy lives in the
+subscription rather than in code:
 
-- The logic lives in `app/handler.py` (`handle(event)`); `app/worker.py` is only the Kafka
-  adapter, so a different transport (e.g. a Pub/Sub push endpoint) can reuse `handle`.
-- **At-least-once:** the offset is committed only after the result is delivered to Kafka, so a
-  crash means the event is processed again. Downstream consumers deduplicate on `sourceEventId`.
-- Messages that can never succeed (invalid JSON, image missing) are logged and skipped. Other
-  failures stop the worker without committing, so the event is retried after a restart.
-  Retries and a dead-letter topic come in the hardening slice.
+| Status | Meaning | What Pub/Sub does |
+|---|---|---|
+| 204 | handled, result published | acks |
+| 400 | not a valid `ImageReceived`, never will be | retries, then dead-letters with the original bytes |
+| 404 | no image stored under that key | retries (so a slow storage write gets another chance), then dead-letters |
+| 500 | storage error, model failure, publish failure | retries with backoff, then dead-letters |
+
+- The logic lives in `app/handler.py` (`handle(event)`); `app/push.py` is only the transport
+  adapter and `app/publisher.py` only the output side, so neither the use case nor the model
+  knows Pub/Sub exists.
+- **At-least-once, and a redelivery re-runs classification:** the same `ImageReceived` yields a new
+  `eventId` with the same `sourceEventId`. Notification deduplicates on `sourceEventId`, which is
+  what stops a hunter getting two texts.
+- The model is loaded at **startup** (FastAPI lifespan), not on the first request, so a pushed
+  message never waits a minute for the weights and risks its acknowledgement deadline.
+- Locally the Pub/Sub emulator pushes to this endpoint — start uvicorn with `--host 0.0.0.0`, or
+  the emulator container cannot reach it.
 
 `AnimalRecognized` JSON:
 `{eventId, sourceEventId, hunterId, storageKey, species, confidence, lowConfidence, occurredAt}`
@@ -60,10 +70,15 @@ python -m app.worker
   - `r2` — Cloudflare R2 via boto3; needs `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY`,
     `R2_SECRET_KEY` (optional `R2_REGION`, default `auto`) — the same names email-ingestion uses.
 
-- Kafka worker: `KAFKA_BOOTSTRAP_SERVERS` (default `localhost:29092`; `kafka:9092` from a
-  container on the compose network), `IMAGE_RECEIVED_TOPIC` (default `image.received`),
-  `ANIMAL_RECOGNIZED_TOPIC` (default `animal.recognized`), `RECOGNITION_CONSUMER_GROUP`
-  (default `recognition`).
+- `RECOGNITION_EVENTS_PROVIDER` (default `logging`) — `logging` (fake, just logs the result) or
+  `pubsub` (publishes for real). With the default, the push endpoint still works end to end;
+  only the result goes to the log instead of a topic.
+- `ANIMAL_RECOGNIZED_TOPIC` (default `animal.recognized`) — the topic results are published to.
+  Which topic *feeds* this service is the subscription's business, so there is no input setting.
+- `PUBSUB_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`, which Cloud Run sets) — required when the
+  provider is `pubsub`.
+- `PUBSUB_EMULATOR_HOST` (e.g. `localhost:8085`) — the Python client honours this automatically,
+  so local dev needs no credentials.
 
 This service reads real environment variables only (it does not load the repo's `.env`).
 
@@ -79,6 +94,5 @@ Self-contained image (build context is this directory), CPU build:
 
 ```bash
 docker build -t wildalert-recognition services/recognition
-docker run -p 8084:8084 wildalert-recognition             # HTTP API
-docker run wildalert-recognition python -m app.worker     # Kafka worker
+docker run -p 8084:8084 wildalert-recognition   # /recognize + the Pub/Sub push endpoint
 ```

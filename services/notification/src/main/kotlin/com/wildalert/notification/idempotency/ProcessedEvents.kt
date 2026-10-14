@@ -5,7 +5,7 @@ import java.util.UUID
 /**
  * Remembers which recognition results have already been turned into an SMS.
  *
- * Delivery is at-least-once: if this service dies after sending an SMS but before its Kafka offset
+ * Delivery is at-least-once: if this service dies after sending an SMS but before the push is
  * is committed, the same event comes back. Without this, the hunter is texted twice and we pay
  * twice. Events are identified by their `sourceEventId` (the ImageReceived they came from), which
  * stays the same across redeliveries — unlike `eventId`, which is new for every published result.

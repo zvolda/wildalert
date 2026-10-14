@@ -1,0 +1,10 @@
+# The 'pubsub' profile: turns on the Pub/Sub push endpoint.
+#
+#   SPRING_PROFILES_ACTIVE=pubsub ./gradlew :services:notification:bootRun
+#
+# Deliberately thin. Unlike email-ingestion, this service needs no Pub/Sub client and no GCP
+# auto-configuration at all — a push subscription is just an authenticated HTTP POST, so the
+# "integration" is a @RestController. The profile exists so one switch works the same way across
+# both services.
+events:
+  provider: pubsub

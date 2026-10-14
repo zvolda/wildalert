@@ -38,19 +38,29 @@ Key realities established during planning:
 
 ## Open Decisions (to finalize as we build — sensible defaults chosen)
 
-- [ ] **Message broker: Kafka now vs. later.** Kafka wanted, but a chat is pending.
-      *Default:* build the code **broker-agnostic** and event-driven from day one; run a
-      local Kafka in dev via Docker Compose; use **managed Kafka** (Upstash/Confluent free
-      tier) in cloud. Finalize "Kafka vs. Cloud Pub/Sub" after the Kafka chat.
-      *Trade-off to weigh (decide in Phase 6):* a Kafka consumer **pulls**, so on Cloud Run it
-      needs min-instances=1 with always-on CPU — it **cannot scale to zero** (paid 24/7; the
-      recognition service is the costly one since DeepFaune needs several GB RAM). **Cloud
-      Pub/Sub push** calls an HTTP endpoint per event, which wakes Cloud Run → keeps
-      scale-to-zero, with built-in retries + dead-letter; cost is a cold start (~1 min model
-      load) on the first photo after idle. Kafka stays the better fit on always-on hosting
-      (GKE, a VM, Railway). Keep consumer logic in a transport-free `handle(event)` so the
-      Kafka loop vs. push endpoint is a thin adapter. (Also re-check managed-Kafka free tiers —
-      Upstash is believed to have discontinued Kafka.)
+- [x] **Message broker — DECIDED (2026-10-08): Cloud Pub/Sub, and Kafka is out of the
+      repository.** Managed Kafka is the only component that would have cost triple digits a
+      month, and it would not even have removed the recognition service's always-warm instance: a
+      Kafka consumer **pulls**, so it needs min-instances=1 regardless — broker cost *on top of*
+      that. **Pub/Sub push** POSTs to an HTTP endpoint per event, so both consumers are plain
+      controllers that need no client library, Cloud Run keeps scale-to-zero, and the free tier
+      (10 GiB/month) covers this project entirely. Pub/Sub's native dead-letter topics and retry
+      policy replaced the hand-written retry/DLQ code. Local dev runs the **Pub/Sub emulator** in
+      `compose.yml`. Consumer logic stayed in a transport-free `handle(event)`, which is exactly
+      what made the swap small.
+      *Follow-ups this created:*
+      - **Ordering keys deliberately not used.** The Kafka message key (`hunterId`) only bought
+        partition affinity, never correctness. Pub/Sub's equivalent would reintroduce
+        head-of-line blocking — a nacked message blocks every later message with the same key —
+        which is the very thing whose absence let the retry loop be deleted. If per-hunter
+        ordering is ever needed ("latest sighting wins"), it is an ordering key on `hunterId`
+        plus that cost.
+      - **Webhook retry can duplicate an alert.** email-ingestion now *blocks* on publish and
+        fails the webhook if Pub/Sub is unreachable, instead of answering 200 for a lost photo.
+        The email provider then retries and we get a second `ImageReceived` with a **new**
+        `eventId`, which notification's idempotency (keyed on `sourceEventId`) will not dedupe.
+        Pre-existing for any webhook retry; the fix is deriving the event id from the message,
+        not generating it.
 - [ ] **Managed Postgres.** **Cloud SQL** (recognized GCP skill, but no free tier and no
       scale-to-zero — a few $/month minimum) vs. **Neon/Supabase** (free tier, cheaper idle).
       *Leaning:* Cloud SQL for the hands-on experience, if the small fixed cost is acceptable.
@@ -73,7 +83,9 @@ Key realities established during planning:
 | **Cloud Run** | Strong fit — default hosting for all containers. | Phase 6 |
 | **Cloud SQL** | Good fit, small fixed cost (see Open Decisions). | Phase 6 |
 | **Cloud Run functions** (formerly Cloud Functions) | Good fit for small event/scheduled jobs: daily digest SMS, old-image cleanup. | Phase 7 |
-| **GKE** | Weak fit for prod (overkill + idle cost for 4 services). Learn deliberately: local `kind`/`k3s` in WSL2, then a short-lived GKE Autopilot deploy that is torn down. Natural home for always-on Kafka consumers. | Phase 9 |
+| **GKE** | Weak fit for prod (overkill + idle cost for 4 services). Learn deliberately: local `kind`/`k3s` in WSL2, then a short-lived GKE Autopilot deploy that is torn down. | Phase 9 |
+| **Spring Cloud GCP** | In use for publishing (`PubSubTemplate` in email-ingestion). Note its auto-configuration eagerly demands Application Default Credentials, so it is gated behind the `pubsub` profile — see `PubSubCredentialsConfig`. | Phase 6 |
+| **Spring Cloud** (the umbrella — *not* Spring Cloud GCP) | Deliberate learning track, each item replacing something already hand-written, which is the point: you know what it abstracts. **OpenFeign** instead of the `RestClient` in `HunterLookupClient`/`HunterClient`; **Resilience4j** for the retry/timeout written by hand there (and it adds a circuit breaker we don't have); **Spring Cloud Gateway** in front of the services for the frontend; optionally **Spring Cloud Stream** — but its Pub/Sub binder is streaming-**pull**, so a service using it cannot scale to zero (min-instances=1), which is why the push design was chosen instead. | Phase 7, 8 |
 
 ---
 
@@ -87,14 +99,14 @@ Key realities established during planning:
                                               | stores photo -> Cloudflare R2
                                               | publishes event: ImageReceived
                                               v
-                                         [ Broker: Kafka ]
+                                         [ Pub/Sub topic  ]
                                               |
                                               v
                                          (2) Recognition Service      (Python + DeepFaune)
                                               | classifies species + confidence
                                               | publishes event: AnimalRecognized
                                               v
-                                         [ Broker: Kafka ]
+                                         [ Pub/Sub topic  ]
                                               |
                                               v
                                          (3) Notification Service     (Kotlin/Spring Boot)
@@ -112,7 +124,7 @@ Key realities established during planning:
 4. **User/Account** (Kotlin) — hunters, email→phone mapping, subscription/plan; API for the future React app.
 5. **Detection History** (Kotlin, later — Phase 8) — stores every `AnimalRecognized`; jOOQ queries for the dashboard.
 
-**Shared infra:** PostgreSQL (managed), Kafka (managed), Cloudflare R2 (images).
+**Shared infra:** PostgreSQL (managed), Cloud Pub/Sub, Cloudflare R2 (images).
 
 ---
 
@@ -139,9 +151,9 @@ then the async flow, then deploy, then scale.
   - [ ] Monorepo layout: one folder per service
   - [ ] Gradle (Kotlin DSL) multi-module setup; Java/Kotlin toolchain (JDK 25 already present)
   - [ ] Dockerfile template per service (OCI images)
-  - [ ] `compose.yml` for local dev: Postgres + Kafka (+ Kafka UI)
+  - [x] `compose.yml` for local dev: Postgres + the Cloud Pub/Sub emulator
   - [ ] Root README: one-time WSL2 + Docker Engine setup, then how to run locally
-- **DoD (review against):** `docker compose up` starts Postgres + Kafka cleanly; repo
+- **DoD (review against):** `docker compose up` starts Postgres + the emulator cleanly; repo
   builds with `./gradlew build`; README lets a newcomer run it from scratch.
 
 > **Dev runtime:** Docker **Desktop** is avoided (company licensing). We use the free,
@@ -203,14 +215,14 @@ then the async flow, then deploy, then scale.
 - **Goal / learn:** event-driven microservices — topics, schemas, retries, idempotency.
 - **Deliverable:** the full pipeline working end-to-end.
 - **Tasks:**
-  - [ ] Define Kafka topics + event schemas (broker-agnostic wrapper)
+  - [x] Define topics + event schemas (broker-agnostic JSON)
   - [ ] `AnimalRecognized` schema: `eventId`, `sourceEventId`, `hunterId`, `storageKey`,
         `species`, `confidence`, `lowConfidence`, `occurredAt`
   - [ ] Recognition fetches image bytes by `storageKey`: Python `ImageSource` interface
         (local-folder fake / R2 via **boto3**) + a `FileSystemImageStore` in email-ingestion
         so the flow runs locally without cloud credentials
-  - [ ] Consumer logic in a transport-free `handle(event)`; Kafka loop is a thin adapter
-        (keeps the Pub/Sub-push option open)
+  - [x] Consumer logic in a transport-free `handle(event)`; the transport is a thin adapter
+        (which is what made replacing Kafka with Pub/Sub push a small change)
   - [ ] End-to-end: forwarded email → recognized → SMS delivered
   - [ ] **Per-hunter inbound address** (e.g. `jan-7f3k9q@in.wildalert.app`): match the hunter by
         the email's **recipient**, not its `From` header — auto-forwarding rules keep the camera's
@@ -230,8 +242,8 @@ then the async flow, then deploy, then scale.
 - **Deliverable:** the whole system running in the cloud on a real domain.
 - **Tasks:**
   - [ ] Managed Postgres — **Cloud SQL** (preferred for experience) or Neon/Supabase
-  - [ ] Broker — managed Kafka (Confluent) **or Cloud Pub/Sub push subscriptions** — *decide
-        using the scale-to-zero trade-off in Open Decisions*
+  - [x] Broker — **Cloud Pub/Sub push subscriptions** (decided 2026-10-08; see Open Decisions).
+        Code + local emulator done; topics, subscriptions and IAM still to provision.
   - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible
   - [ ] Warm the recognition model at startup (reduce cold-start delay)
   - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion — **catch-all** on the
@@ -291,7 +303,7 @@ then the async flow, then deploy, then scale.
   - [ ] Migration path to Kubernetes if/when justified
   - [ ] Kubernetes hands-on: run the containers on local `kind`/`k3s` (WSL2) with manifests/Helm
   - [ ] Short-lived **GKE Autopilot** deploy of the same manifests, then tear the cluster down;
-        write up Cloud Run + Pub/Sub vs. GKE + Kafka trade-offs from experience
+        write up Cloud Run + Pub/Sub vs. GKE + always-on consumers, from experience
 - **DoD (review against):** load test sustains target volume; billing charges correctly;
   auth protects user data.
 
@@ -300,7 +312,7 @@ then the async flow, then deploy, then scale.
 ## Cost Model (approximate, 2026)
 
 **Fixed baseline (any number of users): ~$0–7/month**
-- Domain ~$1/mo · managed Postgres $0–5 · managed Kafka $0 (free tier) · R2 ~$0 · idle Cloud Run ~$0
+- Domain ~$1/mo · Cloud SQL ~$9 · Pub/Sub $0 (10 GiB/month free) · R2 ~$0 · idle Cloud Run ~$0
 
 **Per user (dominated by SMS)** — assuming ~10 photos/day (~300/mo):
 - Email in: $0 · Recognition (Cloud Run CPU): ~$0.15 · Storage+DB+broker share: ~$0.03
@@ -313,8 +325,8 @@ then the async flow, then deploy, then scale.
 
 ## Verification (how we prove each piece works)
 
-- **Per service:** unit + integration tests (Testcontainers for Postgres/Kafka, via the
-  WSL2 Docker Engine socket).
+- **Per service:** unit + integration tests (Testcontainers for Postgres, via the WSL2 Docker
+  Engine socket); the event transport is proven end-to-end against the Pub/Sub emulator.
 - **Recognition accuracy:** run DeepFaune against a folder of real B/W night trail-cam
   photos; confirm correct species above the confidence threshold.
 - **End-to-end:** forward a real email with a photo attachment → confirm an SMS arrives

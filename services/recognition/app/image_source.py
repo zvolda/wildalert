@@ -7,13 +7,14 @@ no cloud bucket) or Cloudflare R2 via boto3 — the Python mirror of the Kotlin 
 Both backends use the same key layout: `inbound/yyyy/MM/dd/<uuid>.<ext>`.
 """
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
 import boto3
 from botocore.exceptions import ClientError
 
-from app.config import Settings
+from app.config import Settings, get_settings
 
 
 class ImageNotFoundError(Exception):
@@ -91,3 +92,9 @@ def build_image_source(settings: Settings) -> ImageSource:
         )
         return R2ImageSource(client, settings.r2_bucket)
     raise ValueError(f"Unknown image source '{settings.image_source}' (expected 'local' or 'r2')")
+
+
+@lru_cache
+def get_image_source() -> ImageSource:
+    """FastAPI dependency; cached so the R2 client is built once. Tests override it with a fake."""
+    return build_image_source(get_settings())

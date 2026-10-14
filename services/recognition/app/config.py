@@ -28,19 +28,11 @@ class Settings(BaseModel):
     r2_secret_key: str = ""
     r2_region: str = "auto"
 
-    # Kafka worker (python -m app.worker). Host apps reach the compose broker on 29092;
-    # containers on the compose network use kafka:9092.
-    kafka_bootstrap_servers: str = "localhost:29092"
-    image_received_topic: str = "image.received"
+    # How recognition results are published: "logging" (fake, default) or "pubsub".
+    events_provider: str = "logging"
     animal_recognized_topic: str = "animal.recognized"
-    # Consumer group: all worker replicas share it, so each event is handled by one of them.
-    consumer_group: str = "recognition"
-    # Messages that can't be processed are parked here instead of blocking the partition.
-    dead_letter_topic: str = "image.received.dlt"
-    # How many times a failing message is tried before it is dead-lettered, and the pause between
-    # attempts (grows with each attempt: 1x, 2x, ...).
-    max_attempts: int = 3
-    retry_backoff_seconds: float = 2.0
+    # Required when events_provider=pubsub. Locally this is the emulator's project.
+    pubsub_project_id: str = ""
 
 
 # Plain string settings and the environment variable each one is read from.
@@ -53,24 +45,24 @@ _STRING_ENV_VARS = {
     "r2_access_key": "R2_ACCESS_KEY",
     "r2_secret_key": "R2_SECRET_KEY",
     "r2_region": "R2_REGION",
-    "kafka_bootstrap_servers": "KAFKA_BOOTSTRAP_SERVERS",
-    "image_received_topic": "IMAGE_RECEIVED_TOPIC",
+    "events_provider": "RECOGNITION_EVENTS_PROVIDER",
     "animal_recognized_topic": "ANIMAL_RECOGNIZED_TOPIC",
-    "consumer_group": "RECOGNITION_CONSUMER_GROUP",
-    "dead_letter_topic": "IMAGE_RECEIVED_DLT_TOPIC",
+    "pubsub_project_id": "PUBSUB_PROJECT_ID",
 }
 
 # Numeric settings, parsed with the matching type.
 _NUMBER_ENV_VARS = {
     "confidence_threshold": ("RECOGNITION_CONFIDENCE_THRESHOLD", float),
-    "max_attempts": ("RECOGNITION_MAX_ATTEMPTS", int),
-    "retry_backoff_seconds": ("RECOGNITION_RETRY_BACKOFF_SECONDS", float),
 }
 
 
 @lru_cache
 def get_settings() -> Settings:
     kwargs = {}
+    # Cloud Run sets GOOGLE_CLOUD_PROJECT; PUBSUB_PROJECT_ID (below) wins if both are set.
+    project = os.getenv("GOOGLE_CLOUD_PROJECT")
+    if project:
+        kwargs["pubsub_project_id"] = project
     for field, (env_var, parse) in _NUMBER_ENV_VARS.items():
         value = os.getenv(env_var)
         if value:

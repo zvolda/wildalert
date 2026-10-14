@@ -29,6 +29,11 @@ not a task:
 `run.googleapis.com` · `cloudbuild.googleapis.com` · `artifactregistry.googleapis.com` ·
 `sqladmin.googleapis.com` · `secretmanager.googleapis.com`
 
+**`pubsub.googleapis.com` is a sixth, needed for step 11** (not for `user-account`). It is already
+enabled on this project — it came with the default bundle a console-created project gets, like
+`bigquery` and `storage`. Note that the Pub/Sub **service agent** which step 11 grants roles to may
+still not appear in IAM until Pub/Sub is actually used.
+
 Anything missing: **Library** → search the name → **Enable**.
 
 *Cost: none.*
@@ -139,7 +144,7 @@ queries it. There is no scale-to-zero for Cloud SQL.
 Creation takes **5–10 minutes**. It is not stuck.
 
 *Cost: the one line item that matters. Delete the instance when you stop working for a while —
-step 11.*
+step 12.*
 
 ---
 
@@ -399,7 +404,104 @@ Flyway-on-`public`-schema gotcha and its fix.
 
 ---
 
-## Step 11 — Stop paying when you stop working
+## Step 11 — Pub/Sub (for the event-driven services, not user-account)
+
+Not needed to run `user-account`, which is plain HTTP. Do this when email-ingestion, recognition and
+notification are deployed — the push subscriptions need their URLs to exist first. Locally the same
+four topics and four subscriptions are created for you by `compose.yml`, so this is the cloud
+mirror of what the emulator already does.
+
+**Navigation:** Pub/Sub → Topics → **Create topic**
+
+Create four, all with default settings (no schema, Google-managed encryption):
+
+`image.received` · `image.received.dlt` · `animal.recognized` · `animal.recognized.dlt`
+
+Uncheck **Add a default subscription** — the subscriptions below are configured deliberately.
+
+> Periods are legal in Pub/Sub names, so these match the topic names the services already use.
+
+### Push subscriptions
+
+**Navigation:** Pub/Sub → Subscriptions → **Create subscription** (twice)
+
+| Field | `image.received.recognition` | `animal.recognized.notification` |
+|---|---|---|
+| Topic | `image.received` | `animal.recognized` |
+| Delivery type | **Push** | **Push** |
+| Endpoint URL | `<recognition-url>/events/image-received` | `<notification-url>/api/events/animal-recognized` |
+| Enable authentication | **on** | **on** |
+| Service account | `wildalert-pubsub-push@…` | `wildalert-pubsub-push@…` |
+| Audience | leave blank | leave blank |
+| Acknowledgement deadline | **600 seconds** | **60 seconds** |
+| Retry policy | Retry after exponential backoff, min **10s**, max **600s** | same |
+| Dead lettering | on → `image.received.dlt`, max **5** attempts | on → `animal.recognized.dlt`, max **5** attempts |
+| Message ordering | **off** | **off** |
+| Exactly once delivery | off | off |
+
+Why 600s for recognition: that is the maximum, and for a push subscription the ack deadline doubles
+as the HTTP request timeout. Classification is quick, but a cold instance has to exist first. Set
+the recognition Cloud Run service's **request timeout to 600s** to match, and leave startup CPU
+boost on — the model loads during startup, not during the request.
+
+### The two subscriptions people forget
+
+**Navigation:** Pub/Sub → Subscriptions → **Create subscription**, twice more
+
+| Field | Value |
+|---|---|
+| Subscription ID | `image.received.dlt.inspect` / `animal.recognized.dlt.inspect` |
+| Topic | `image.received.dlt` / `animal.recognized.dlt` |
+| Delivery type | **Pull** |
+
+Everything else default. **A Pub/Sub topic with no subscription discards every message published to
+it** — without these, dead-lettering quietly throws failures away and the whole "nothing is lost"
+design is a fiction. They are also how you read what failed:
+
+```bash
+gcloud pubsub subscriptions pull image.received.dlt.inspect --limit 10 --auto-ack
+```
+
+### Service accounts and grants
+
+**IAM & Admin → Service Accounts → Create service account** — three, no keys for any of them:
+
+| Account | Grants | Where to grant it |
+|---|---|---|
+| `wildalert-pubsub-push` | `roles/run.invoker` | Cloud Run → `recognition` → **Permissions**, and again on `notification`. Per service, not project-wide |
+| `wildalert-email-ingestion` | `roles/pubsub.publisher` | Pub/Sub → Topics → `image.received` → **Permissions** |
+| `wildalert-recognition` | `roles/pubsub.publisher` | Pub/Sub → Topics → `animal.recognized` → **Permissions** |
+
+Then the Google-managed **Pub/Sub service agent**,
+`service-789527844011@gcp-sa-pubsub.iam.gserviceaccount.com`:
+
+| Grant | Where |
+|---|---|
+| `roles/iam.serviceAccountTokenCreator` | IAM & Admin → Service Accounts → **`wildalert-pubsub-push`** → Permissions → Grant access. A grant *on the service account*, not on the project — this is what lets Pub/Sub mint the OIDC token it sends |
+| `roles/pubsub.publisher` | each `.dlt` topic |
+| `roles/pubsub.subscriber` | each of the two push subscriptions |
+
+The dead-letter section of the subscription form usually offers a one-click grant for the last two
+— use it, then confirm both appear. The service agent is **hidden in IAM unless you tick "Include
+Google-provided role grants"**, and it may not exist at all until Pub/Sub is first used.
+
+**Both consumers keep ingress `Internal` and Require authentication.** Pub/Sub push is one of the
+few sources that can reach an internal-ingress Cloud Run service, so they never need public URLs,
+and the apps deliberately do not verify the OIDC token themselves — Cloud Run does it, and only
+this one account holds `run.invoker`.
+
+Verify authentication is really on, rather than trusting the form:
+
+```bash
+curl -X POST "$(gcloud run services describe notification --region europe-west3 --format='value(status.url)')/api/events/animal-recognized" -d '{}'
+# 403 from Cloud Run. A 400 from the app means authentication is NOT required.
+```
+
+*Cost: free at this volume (10 GiB/month).*
+
+---
+
+## Step 12 — Stop paying when you stop working
 
 **Navigation:** SQL → `wildalert-db` → **Delete**
 

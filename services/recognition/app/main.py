@@ -2,9 +2,15 @@
 
 Consumes stored trail-camera images and classifies the animal (species + confidence)
 using DeepFaune (see ../bakeoff for why DeepFaune over SpeciesNet). This module is the
-FastAPI entry point. The classifier is selected by config: a fake stub by default (no ML
-deps), or the real DeepFaune model when RECOGNITION_CLASSIFIER=deepfaune.
+FastAPI entry point, serving both /recognize (an uploaded file) and the Pub/Sub push
+endpoint in app.push (a stored image, named by an ImageReceived event). The classifier is
+selected by config: a fake stub by default (no ML deps), or the real DeepFaune model when
+RECOGNITION_CLASSIFIER=deepfaune.
 """
+
+import logging
+import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, UploadFile
 
@@ -15,8 +21,34 @@ from app.classifier import (
     get_classifier,
 )
 from app.config import Settings, get_settings
+from app.push import router as push_router
 
-app = FastAPI(title="WildAlert Recognition Service")
+# uvicorn configures only its own loggers, so without this the service's own INFO lines (the push
+# endpoint, the publisher) are dropped by the root logger's default WARNING level — the Kafka worker
+# used to call basicConfig in its main().
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+log = logging.getLogger("recognition")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Loads the model before the service accepts traffic.
+
+    DeepFaune takes about a minute to load. Doing it here means Cloud Run's startup probe holds
+    traffic until it is ready, instead of the first pushed message waiting on the weights and
+    risking its acknowledgement deadline.
+    """
+    log.info("Loading classifier at startup")
+    get_classifier()
+    yield
+
+
+app = FastAPI(title="WildAlert Recognition Service", lifespan=lifespan)
+app.include_router(push_router)
 
 
 @app.get("/health")
