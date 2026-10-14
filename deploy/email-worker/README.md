@@ -35,11 +35,17 @@ Keep `WEBHOOK_SECRET` identical in Secret Manager and in the worker.
 ## Setup
 
 1. **Domain on Cloudflare.** Register `wildalert.app` (Cloudflare Registrar sells at cost) or
-   transfer it in. Email Routing needs Cloudflare as the authoritative nameservers.
+   transfer it in. Email Routing needs Cloudflare as the authoritative nameservers. **Done
+   2026-10-14.**
 2. **Enable Email Routing** (dashboard → the zone → Email → Email Routing) and let it add the
-   MX + SPF records it proposes.
+   MX + SPF records it proposes. **Done 2026-10-14** — `route1/2/3.mx.cloudflare.net`
+   (45/70/91) + `v=spf1 include:_spf.mx.cloudflare.net ~all`, confirmed from 8.8.8.8 and
+   1.1.1.1.
 3. **Verify a destination address** — your own mailbox. Needed for step 5 and for a smoke test
-   before the worker exists.
+   before the worker exists. **Done:** `animalrecognition@gmail.com`.
+   *Smoke test passed* — with the catch-all temporarily set to **Send to an email** → that
+   address, a test message to the zone arrived. Do this before wiring the worker: it proves
+   DNS/MX/SPF/catch-all independently, so any later failure is ours, not Cloudflare's.
 4. **Deploy the worker:**
    ```bash
    cd deploy/email-worker

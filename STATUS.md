@@ -273,11 +273,16 @@ longer exist in the repo, but what each slice proved still holds._
   `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README. Untested until
   email-ingestion has a URL.
   **`wildalert.app` is registered (2026-10-14, Cloudflare Registrar)** and the zone is served by
-  Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`, verified by `nslookup -type=NS`).
-  At that point the apex had **no MX and no TXT records** — Email Routing had not been enabled, so
-  there was nothing to conflict with. Still to do: enable Email Routing (accept its MX + SPF
-  records), verify a destination address, deploy the worker, point the **apex** catch-all at it,
-  and set `INBOUND_EMAIL_DOMAIN=wildalert.app`.
+  Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`).
+  **Email Routing is enabled and receiving mail (2026-10-14).** Verified from two resolvers
+  outside Cloudflare (8.8.8.8 and 1.1.1.1): `MX` → `route1/2/3.mx.cloudflare.net` (priorities
+  45/70/91) and `TXT` → `v=spf1 include:_spf.mx.cloudflare.net ~all`. The apex had no MX/TXT
+  before this, so nothing was overwritten. A **temporary catch-all forwards to
+  `animalrecognition@gmail.com`** (the verified destination address) and a real test email
+  arrived there — so DNS, MX, SPF and the catch-all rule are all proven before our own service
+  is involved. No DMARC record, which is fine while we only receive.
+  Still to do: deploy the worker, switch the catch-all from *Send to an email* to
+  **Send to a Worker** (`wildalert-email-in`), and set `INBOUND_EMAIL_DOMAIN=wildalert.app`.
   Hunters created before that carry placeholder addresses and need new tokens.
   - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
     Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
