@@ -41,18 +41,18 @@ class HunterControllerTest {
             .andExpect(jsonPath("$.id").value(id.toString()))
             .andExpect(jsonPath("$.email").value("hunter@example.com"))
             // Default domain from application.yml (INBOUND_EMAIL_DOMAIN unset).
-            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@in.wildalert.local"))
+            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@wildalert.local"))
     }
 
     @Test
     fun `GET by-inbound-address returns the hunter who owns the address`() {
         val id = UUID.randomUUID()
-        given(service.getByInboundAddress("7f3k9qabcdef@in.wildalert.local")).willReturn(sampleHunter(id))
+        given(service.getByInboundAddress("7f3k9qabcdef@wildalert.local")).willReturn(sampleHunter(id))
 
-        mockMvc.perform(get("/api/hunters/by-inbound-address").param("address", "7f3k9qabcdef@in.wildalert.local"))
+        mockMvc.perform(get("/api/hunters/by-inbound-address").param("address", "7f3k9qabcdef@wildalert.local"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.id").value(id.toString()))
-            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@in.wildalert.local"))
+            .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@wildalert.local"))
     }
 
     @Test

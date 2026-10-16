@@ -1,8 +1,12 @@
-# Deploying user-account through the Cloud Console (UI)
+# Deploying WildAlert through the Cloud Console (UI)
 
 This is how the deploy is done: by clicking, form by form. It is also the record of which option
 was chosen where, so keep it in step with [`README.md`](./README.md)'s settings table — that table
 and these forms are the only places the values live.
+
+Steps 1-10 cover the shared infrastructure and **user-account** (private, Cloud SQL). Steps 10a-11b
+cover **email-ingestion** (public, the webhook) and the domain that feeds it. Steps 1-3 and 8 are
+reused rather than repeated for the second service.
 
 > **Verifying as you go.** The console does not tell you what it actually created, and its presets
 > switch on fewer things than the labels imply — provisioning this instance left backups,
@@ -328,7 +332,7 @@ Environment variables — add three:
 |---|---|
 | `DATABASE_URL` | `jdbc:postgresql:///wildalert?cloudSqlInstance=wildalert-prod:europe-west3:wildalert-db&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
 | `POSTGRES_USER` | `wildalert` |
-| `INBOUND_EMAIL_DOMAIN` | `in.wildalert.local` |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.local` until the domain exists, then `wildalert.app` (the **apex** — see `deploy/email-worker/`) |
 
 Secrets — **Reference a secret**:
 
@@ -404,6 +408,302 @@ Flyway-on-`public`-schema gotcha and its fix.
 
 ---
 
+## Step 10a — Image storage: an R2 bucket (Cloudflare, not Google)
+
+email-ingestion writes the photo somewhere recognition can read it later by storage key. On Cloud
+Run the container filesystem is per-instance and vanishes, so `filesystem` is not an option in the
+cloud: it has to be object storage, and the choice made in Phase 3 is **Cloudflare R2** (10 GB free,
+no egress fees, S3 API — so `R2ImageStore` uses Amazon's S3 SDK pointed at a different endpoint).
+
+**Navigation:** Cloudflare dashboard → **R2 Object Storage** → **Create bucket**
+
+| Field | Value |
+|---|---|
+| Bucket name | `wildalert-images` |
+| Location | **EU** (keeps photos near europe-west3; R2 has no per-region pricing) |
+| Default storage class | Standard |
+
+R2 asks for a payment method even on the free tier. Then **R2 → API → Manage API tokens → Create
+API token**:
+
+| Field | Value |
+|---|---|
+| Token name | `wildalert-email-ingestion` |
+| Permissions | **Object Read & Write** |
+| Specify bucket | `wildalert-images` only |
+| TTL | Forever |
+
+The result page shows, once only:
+
+- **Access Key ID** and **Secret Access Key** → these become the two Secret Manager secrets below
+- the **S3 endpoint** `https://<account-id>.r2.cloudflarestorage.com` → this is `R2_ENDPOINT`
+
+Ignore the "Token value" line — that one is for Cloudflare's own API, not the S3 one. What
+`R2ImageStore` needs is the *Access Key ID / Secret Access Key* pair.
+
+> Skipping R2 for now is legitimate: deploy with `STORAGE_PROVIDER=logging` and the mail path still
+> proves itself end to end (the event is published with a storage key that nothing can fetch yet).
+> Recognition is what actually needs the bytes, and it is not deployed yet.
+
+*Cost: free below 10 GB stored and 1M writes/month. Phase 7 adds a lifecycle rule that deletes
+photos after processing.*
+
+---
+
+## Step 10b — Secrets for email-ingestion
+
+**Navigation:** Security → **Secret Manager** → **Create secret** (three times, or once if you
+skipped R2)
+
+| Secret name | Value |
+|---|---|
+| `wildalert-webhook-secret` | 32+ random characters — the only thing between the public webhook and the internet. `openssl rand -base64 32` in Cloud Shell, then paste |
+| `wildalert-r2-access-key` | R2 **Access Key ID** from step 10a |
+| `wildalert-r2-secret-key` | R2 **Secret Access Key** from step 10a |
+
+All three: automatic replication, Google-managed encryption, no expiry. **Paste with no trailing
+newline** — the console stores exactly what you paste, and a stray newline in the webhook secret
+means every email gets a 401, because the filter compares the raw strings. Check before trusting it:
+
+```bash
+gcloud secrets versions access latest --secret=wildalert-webhook-secret | xxd | tail -2
+# the final byte must not be 0a
+```
+
+Then grant the runtime account read access — **per secret**, not project-wide, so this service
+cannot also read the database password:
+
+**Navigation:** Secret Manager → tick the three secrets → **Permissions** panel → **Add principal**
+
+| Field | Value |
+|---|---|
+| Principal | `wildalert-email-ingestion@wildalert-prod.iam.gserviceaccount.com` |
+| Role | **Secret Manager Secret Accessor** |
+
+---
+
+## Step 10c — Build the email-ingestion image
+
+A second trigger, identical to step 8 apart from the two substitutions. `cloudbuild.yaml` builds any
+service, which is the whole reason it takes `_SERVICE`.
+
+**Navigation:** Cloud Build → **Triggers** (region `europe-west3`) → **+ Create trigger**
+
+| Field | Value |
+|---|---|
+| Name | `email-ingestion-main` |
+| Event | Push to a branch |
+| Source → Repository | the `zvolda/wildalert` connection from step 8 — already authorised, just pick it |
+| Branch | `^main$` |
+| Configuration | Cloud Build configuration file → `deploy/cloudbuild.yaml` |
+| Service account | `789527844011-compute@developer.gserviceaccount.com` |
+| `_SERVICE` | `email-ingestion` |
+| `_IMAGE_BASE` | `europe-west3-docker.pkg.dev/wildalert-prod/wildalert/email-ingestion` — **no tag** |
+
+**The code has to be on `main` first.** The trigger builds `^main$`, and `UserAccountAuth` (the
+ID-token change) is what lets this service talk to the private user-account at all. Merge, then
+**⋮ → Run trigger** rather than waiting for a push.
+
+```bash
+gcloud artifacts docker images list \
+  europe-west3-docker.pkg.dev/wildalert-prod/wildalert/email-ingestion \
+  --format="table(version,tags,createTime)"
+```
+
+Note the tag — step 10d needs it.
+
+---
+
+## Step 10d — Deploy email-ingestion to Cloud Run
+
+**Navigation:** Cloud Run → **Deploy container** → **Service**
+
+### Top of the form
+
+| Field | Value |
+|---|---|
+| Container image URL | Artifact Registry → `email-ingestion` → the tag from step 10c |
+| Service name | `email-ingestion` |
+| Region | `europe-west3` |
+| Authentication | **Allow unauthenticated invocations** ← the opposite of user-account, deliberately |
+| Billing | Request-based |
+| Auto-scaling | Min **0**, Max **3** |
+| Ingress | All |
+
+**Why this one is public.** Cloudflare Workers call in from outside Google Cloud, so IAM
+authentication is not available to them — there is no Google identity to grant `run.invoker` to. The
+protection is `WebhookAuthFilter`: 401 on `/api/emails` unless `X-Webhook-Secret` matches, which is
+exactly why that filter was built in Phase 6 slice 1. Health probes stay open by design.
+
+### What "public" exposes, and what it does not
+
+"Allow unauthenticated" removes a check that happens **in front of the container**: with *Require
+authentication* Google validates the caller's token and answers 403 itself, so `user-account`'s JVM
+never sees an anonymous request at all. Here that door is open, and the only thing between a
+stranger and the code is code we wrote. Giving the worker a Google identity instead would mean a
+downloaded service-account key pasted into Cloudflare — a permanent credential on someone else's
+platform in place of a shared secret we can rotate. Strictly worse.
+
+What an anonymous request actually reaches:
+
+| Request | Result |
+|---|---|
+| `POST /api/emails`, no or wrong header | **401** from `WebhookAuthFilter`, before the MIME parser, R2, user-account and the model |
+| `GET /actuator/health` (+ `/liveness`, `/readiness`) | **200 `{"status":"UP"}`** — open on purpose so Cloud Run can probe it; says nothing else |
+| anything else | **404** — `exposure.include: health` means `env`, `metrics` and `heapdump` do not exist |
+
+The comparison is `MessageDigest.isEqual` on raw bytes, so the secret cannot be discovered one
+character at a time by timing the replies. **Treat the URL itself as not secret** — it lives in the
+worker's config and in logs, and `run.app` gets scanned. The secret is the control; obscurity is not.
+
+**If the secret leaked**, the damage is bounded: photos pushed through R2 and the model at our
+expense, and a fake alert to a hunter whose inbound address the caller already knew. Not phone
+numbers — the webhook's response carries the hunter's UUID and matched address only, and this
+service holds no database access at all.
+
+**Max instances is therefore a spend cap, not a performance setting.** A flood of rejected 25 MB
+bodies still costs requests and bandwidth; 3 is the ceiling on how much. Real protection — rate
+limiting plus an allowlist of Cloudflare's published egress ranges — needs an external HTTPS load
+balancer and Cloud Armor, roughly $18–20/month, more than the rest of this project combined. A
+Phase 7 decision, deliberately not now.
+
+### Container → Settings
+
+| Field | Value | Note |
+|---|---|---|
+| Container port | **8080** | Cloud Run injects `PORT`; `application.yml` reads `${PORT:8083}` |
+| Memory | **1 GiB** | a 25 MB email is parsed in memory, and the JVM wants headroom |
+| CPU | **1** | |
+| Request timeout | **300s** (the default) | |
+
+### Container → Variables & Secrets
+
+| Name | Value |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `pubsub` |
+| `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` |
+| `USER_ACCOUNT_AUTH` | `gcp-id-token` |
+| `STORAGE_PROVIDER` | `r2` (or `logging` if you skipped step 10a) |
+| `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
+| `R2_BUCKET` | `wildalert-images` |
+
+Secrets — **Reference a secret**, each exposed as an environment variable:
+
+| Secret | Env var name | Version |
+|---|---|---|
+| `wildalert-webhook-secret` | `WEBHOOK_SECRET` | `latest` |
+| `wildalert-r2-access-key` | `R2_ACCESS_KEY` | `latest` |
+| `wildalert-r2-secret-key` | `R2_SECRET_KEY` | `latest` |
+
+Three variables **not** to set here, each of which breaks something quietly:
+
+- **`SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST`** — local only. Setting it activates
+  `PubSubCredentialsConfig`'s `NoCredentialsProvider`, and the service publishes into nothing.
+- **`SPRING_CLOUD_GCP_PROJECT_ID`** — resolves from the metadata server in the cloud. An
+  empty-but-present value is worse than an absent one.
+- **`EVENTS_PROVIDER`** — the `pubsub` profile sets it *together with* the GCP auto-configuration it
+  needs. Setting the provider on its own gives you a publisher with no client.
+
+`USER_ACCOUNT_BASE_URL` does double duty: it is both the address called and the **audience** of the
+ID token minted for it. Cloud Run rejects a token whose audience is the service's *other* URL, so
+use the same string you verify with, and no trailing slash.
+
+### Container → Health checks
+
+Startup probe, same shape as step 9: HTTP `/actuator/health/readiness`, initial delay `10`, timeout
+`5`, period `10`, failure threshold `12`. This service has no database, so readiness only means
+"Spring started" — still worth having, as it keeps traffic off a JVM that is still warming up.
+
+### Security
+
+| Field | Value |
+|---|---|
+| Service account | `wildalert-email-ingestion@wildalert-prod.iam.gserviceaccount.com` |
+
+### The two grants this service needs
+
+Without them the deploy succeeds and then fails on every email — worth doing before the first test
+rather than after.
+
+| Grant | Where in the console |
+|---|---|
+| `roles/pubsub.publisher` on topic `image.received` | Pub/Sub → Topics → `image.received` → **Permissions** → Add principal → the `wildalert-email-ingestion` account |
+| `roles/run.invoker` on service `user-account` | Cloud Run → services list → tick `user-account` → **Permissions** → Add principal → the same account → **Cloud Run Invoker** |
+
+A missing `run.invoker` reads like this in the logs: `Could not reach user-account to match … after
+2 attempts; treating it as no match`. The photo is still stored and the event still published — only
+that SMS is lost. The degradation is deliberate (see `HunterLookupClient`), but it does mean **a 403
+is invisible in the HTTP response**: the webhook answers 200 with `matchedHunterId: null`. Read the
+response body, not the status code.
+
+---
+
+## Step 10e — Verify email-ingestion before Cloudflare is involved
+
+From Cloud Shell. The point is to prove the webhook, the secret, the hunter match, the R2 write and
+the Pub/Sub publish with `curl` as the only moving part — so that anything that fails afterwards
+belongs to Cloudflare's half, not ours.
+
+```bash
+URL=$(gcloud run services describe email-ingestion --region europe-west3 --format='value(status.url)')
+SECRET=$(gcloud secrets versions access latest --secret=wildalert-webhook-secret)
+
+# 1. The door is locked.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL/api/emails" --data-binary 'x'
+# 401. A 200 means WEBHOOK_SECRET never reached the container and the endpoint is open.
+
+# 2. Health, and nothing else.
+curl -s "$URL/actuator/health"                                 # {"status":"UP",...}
+curl -s -o /dev/null -w '%{http_code}\n' "$URL/actuator/env"   # 404
+
+# 3. Which address belongs to a hunter?
+TOKEN=$(gcloud auth print-identity-token)
+UA=$(gcloud run services describe user-account --region europe-west3 --format='value(status.url)')
+curl -s -H "Authorization: Bearer $TOKEN" "$UA/api/hunters/by-email?email=you@example.com"
+# note "inboundAddress" -- <token>@<whatever INBOUND_EMAIL_DOMAIN currently says>
+```
+
+Then post a minimal email with a JPEG attachment, exactly as the worker will:
+
+```bash
+ADDR='<token>@wildalert.app'
+IMG=$(printf '\377\330\377\333\000\001\377\331' | base64 -w0)
+{
+  printf 'From: camera@example.com\r\n'
+  printf 'To: %s\r\n' "$ADDR"
+  printf 'Subject: test\r\nMIME-Version: 1.0\r\n'
+  printf 'Content-Type: multipart/mixed; boundary=b\r\n\r\n'
+  printf -- '--b\r\nContent-Type: image/jpeg\r\n'
+  printf 'Content-Transfer-Encoding: base64\r\n\r\n%s\r\n' "$IMG"
+  printf -- '--b--\r\n'
+} > mail.eml
+
+curl -s -X POST "$URL/api/emails?envelopeTo=$ADDR" \
+  -H "X-Webhook-Secret: $SECRET" -H 'Content-Type: message/rfc822' \
+  --data-binary @mail.eml
+# {"matchedRecipient":"<token>@...","matchedHunterId":"<uuid>","imageCount":1,...}
+```
+
+A non-null `matchedHunterId` is the real prize: it proves the ID token was minted *and* accepted,
+so `run.invoker` is granted. Then confirm the two side effects:
+
+```bash
+# The event reached Pub/Sub. This subscription exists so the topic can be read with no consumer:
+gcloud pubsub subscriptions pull image.received.inspect --limit 5 --auto-ack \
+  --format="value(message.data.decode(base64))"
+# {"storageKey":"...","contentType":"image/jpeg","senderEmail":"camera@example.com","hunterId":"..."}
+
+# The bytes reached R2: Cloudflare dashboard → R2 → wildalert-images → the object with that key.
+```
+
+If `matchedHunterId` is null, the Cloud Run logs for this revision say which of three things it is:
+`403 Forbidden` on the lookup means `run.invoker` is missing; `Could not mint an ID token` means the
+service account or `USER_ACCOUNT_AUTH` is wrong; a plain 404 means the address is not a hunter's —
+most likely because `INBOUND_EMAIL_DOMAIN` on user-account still says `in.wildalert.local`, which
+step 11b fixes.
+
+---
+
 ## Step 11 — Pub/Sub (for the event-driven services, not user-account)
 
 Not needed to run `user-account`, which is plain HTTP. Do this when email-ingestion, recognition and
@@ -469,7 +769,7 @@ gcloud pubsub subscriptions pull image.received.dlt.inspect --limit 10 --auto-ac
 | Account | Grants | Where to grant it |
 |---|---|---|
 | `wildalert-pubsub-push` | `roles/run.invoker` | Cloud Run → `recognition` → **Permissions**, and again on `notification`. Per service, not project-wide |
-| `wildalert-email-ingestion` | `roles/pubsub.publisher` | Pub/Sub → Topics → `image.received` → **Permissions** |
+| `wildalert-email-ingestion` | `roles/pubsub.publisher` | Pub/Sub → Topics → `image.received` → **Permissions** (already done in step 10d) |
 | `wildalert-recognition` | `roles/pubsub.publisher` | Pub/Sub → Topics → `animal.recognized` → **Permissions** |
 
 Then the Google-managed **Pub/Sub service agent**,
@@ -498,6 +798,53 @@ curl -X POST "$(gcloud run services describe notification --region europe-west3 
 ```
 
 *Cost: free at this volume (10 GiB/month).*
+
+---
+
+## Step 11b — Domain and inbound email (Cloudflare, not Google)
+
+The last link: a hunter's address on a real domain reaching the webhook you just verified. The
+click-by-click steps, the worker code and its verification live in
+**[`email-worker/README.md`](./email-worker/README.md)** — this is the sequence and the decisions
+behind it.
+
+**Done already (2026-10-14):** `wildalert.app` registered at Cloudflare Registrar, Cloudflare
+nameservers authoritative, Email Routing enabled with its MX + SPF records (confirmed from 8.8.8.8
+and 1.1.1.1), a verified destination address, and a temporary catch-all → *Send to an email* that a
+real test message arrived through. DNS, MX, SPF and the catch-all rule are therefore proven
+independently of our code.
+
+**What is left, in this order — step 10d has to come first, because the worker needs the ingestion
+URL as a secret:**
+
+1. `cd deploy/email-worker && npx wrangler deploy`
+2. `npx wrangler secret put INGESTION_URL` → the Cloud Run URL from step 10d, no trailing slash
+3. `npx wrangler secret put WEBHOOK_SECRET` → **the same value** as `wildalert-webhook-secret`
+   (`gcloud secrets versions access latest --secret=wildalert-webhook-secret`)
+4. Email Routing → **Catch-all address → Send to a Worker → `wildalert-email-in`** → Save. This
+   replaces the temporary forward-to-Gmail rule.
+5. Cloud Run → `user-account` → **Edit & deploy new revision** → set
+   `INBOUND_EMAIL_DOMAIN=wildalert.app` → Deploy. Existing hunters need nothing: only the token is
+   stored and the domain comes from config, so `GET /api/hunters/{id}` starts returning
+   `<token>@wildalert.app` on the new revision.
+6. Send a real email to a hunter's `inboundAddress` with a photo attached, with `npx wrangler tail`
+   running. Expect a log line from the worker, a 200 from ingestion, and the same
+   `matchedHunterId` / R2 object / `image.received` message as step 10e.
+
+**The catch-all is on the apex, not `in.wildalert.app`.** Cloudflare allows catch-all rules on the
+apex only; a subdomain would need one literal routing rule per address, which would put a Cloudflare
+API call inside hunter registration. Explicit custom addresses are still matched before the
+catch-all, so `hello@wildalert.app` can forward to your own mailbox. The price: the apex MX belongs
+to Cloudflare, so no other provider can host mailboxes there later.
+
+**Nothing is lost if ingestion is down.** The worker throws rather than calling `setReject()`, and
+Email Routing retries a worker that throws — including on a 401 from a mismatched secret, which is
+why step 3 above matters more than it looks. A bounce, by contrast, makes some senders (Outlook)
+retry hourly for hours.
+
+**Up to here the SMS still does not arrive**, and that is expected: `image.received` has no
+consumer until recognition is deployed (step 11 and `ROADMAP.md`'s remaining Phase 6 work). The
+`image.received.inspect` subscription is how you read the event in the meantime.
 
 ---
 

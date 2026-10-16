@@ -25,11 +25,17 @@ data class HunterRef(
  *
  * A failed lookup is retried once first, because the common cause is a user-account instance
  * cold-starting rather than a real outage. Timeouts come from `spring.http.client.*`.
+ *
+ * In the cloud user-account is private, so every call carries an ID token from `UserAccountAuth`
+ * (see that file). A missing `roles/run.invoker` grant shows up here as a 403 — which this class
+ * treats as "no match", so watch the logs for it rather than expecting a failed webhook.
  */
 @Component
 class HunterLookupClient(
     builder: RestClient.Builder,
     @Value("\${services.user-account.base-url}") baseUrl: String,
+    /** Absent locally (user-account is open); a Cloud Run ID token in the cloud. */
+    private val auth: UserAccountAuth? = null,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -62,6 +68,7 @@ class HunterLookupClient(
     private fun lookUp(address: String): HunterRef? =
         restClient.get()
             .uri { uri -> uri.path("/api/hunters/by-inbound-address").queryParam("address", address).build() }
+            .headers { headers -> auth?.authorize(headers) }
             .retrieve()
             .body(HunterRef::class.java)
 
