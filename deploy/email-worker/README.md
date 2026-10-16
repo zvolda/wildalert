@@ -41,25 +41,31 @@ Keep `WEBHOOK_SECRET` identical in Secret Manager and in the worker.
    MX + SPF records it proposes. **Done 2026-10-14** — `route1/2/3.mx.cloudflare.net`
    (45/70/91) + `v=spf1 include:_spf.mx.cloudflare.net ~all`, confirmed from 8.8.8.8 and
    1.1.1.1.
-3. **Verify a destination address** — your own mailbox. Needed for step 5 and for a smoke test
+3. **Verify a destination address** — your own mailbox. Needed for step 6 and for a smoke test
    before the worker exists. **Done:** `animalrecognition@gmail.com`.
    *Smoke test passed* — with the catch-all temporarily set to **Send to an email** → that
    address, a test message to the zone arrived. Do this before wiring the worker: it proves
    DNS/MX/SPF/catch-all independently, so any later failure is ours, not Cloudflare's.
-4. **Deploy the worker:**
+4. **Deploy email-ingestion first.** The worker needs its URL, and a 401 or a cold 503 from it is
+   indistinguishable here from a Cloudflare problem. `deploy/CONSOLE.md` steps 10a-10e build it,
+   deploy it and verify the whole webhook path with `curl` before any mail is involved.
+5. **Deploy the worker:**
    ```bash
    cd deploy/email-worker
    npx wrangler deploy
    npx wrangler secret put INGESTION_URL     # https://email-ingestion-....run.app, no trailing slash
    npx wrangler secret put WEBHOOK_SECRET    # same value as the Cloud Run env/secret
    ```
-5. **Point the catch-all at it:** Email Routing → Catch-all address → Action **Send to a
-   Worker** → `wildalert-email-in` → Save.
-6. **Custom addresses first** (optional): add `hello@wildalert.app` → your mailbox. Explicit
+6. **Point the catch-all at it:** Email Routing → Catch-all address → Action **Send to a
+   Worker** → `wildalert-email-in` → Save. This replaces the temporary forward-to-Gmail rule
+   from step 3.
+7. **Custom addresses first** (optional): add `hello@wildalert.app` → your mailbox. Explicit
    rules take precedence over the catch-all.
-7. **Set `INBOUND_EMAIL_DOMAIN=wildalert.app`** on the user-account Cloud Run service and
-   redeploy. Hunters created before this carry addresses on the old placeholder domain and
-   need their tokens regenerated.
+8. **Set `INBOUND_EMAIL_DOMAIN=wildalert.app`** on the user-account Cloud Run service and deploy a
+   new revision. Existing hunters need nothing — `InboundAddresses` stores only the token and reads
+   the domain from config, so their addresses move domain with the revision. Until then they carry
+   `…@in.wildalert.local`, which no mail can reach, so the webhook would answer 200 with
+   `matchedHunterId: null`.
 
 ## Verifying
 
@@ -67,8 +73,10 @@ Keep `WEBHOOK_SECRET` identical in Secret Manager and in the worker.
 - Send to a non-existent address on the zone: the catch-all should invoke the worker, and
   email-ingestion should answer 200 with `matchedHunterId: null` (unknown recipients are not
   an error).
-- Send to a real hunter's address with a photo attached: the response carries
-  `matchedRecipient` and `imageCount`, and the pipeline produces an SMS.
+- Send to a real hunter's address with a photo attached: the response carries `matchedRecipient`,
+  a non-null `matchedHunterId` and `imageCount`. **No SMS yet** — `image.received` has no consumer
+  until recognition and notification are deployed; read the event with
+  `gcloud pubsub subscriptions pull image.received.inspect --limit 5 --auto-ack`.
 - A bad `WEBHOOK_SECRET` shows up as a 401 in `wrangler tail` and the message is retried by
   Email Routing, not lost.
 

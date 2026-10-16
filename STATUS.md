@@ -260,14 +260,44 @@ longer exist in the repo, but what each slice proved still holds._
     ADC, so email-ingestion starting there is weak evidence for it, but the host case with the
     `pubsub` profile *off* has not been exercised deliberately.
 
+- **Slice 5 (code done, pending deploy): email-ingestion can call a private user-account.**
+  Found while planning the domain slice, not by a test: `HunterLookupClient` sent no credential, and
+  user-account runs with Cloud Run's **Require authentication**. Every lookup in the cloud would have
+  been a 403 — and because a failed lookup deliberately degrades to "no hunter matched" rather than
+  failing the webhook, the symptom would have been a cheerful `200 {"matchedHunterId": null}` on
+  every photo and no SMS, with nothing in the response to say why.
+  - `UserAccountAuth` (a `fun interface`) with `GcpIdTokenUserAccountAuth` behind
+    `services.user-account.auth=gcp-id-token`, same swappable-interface shape as `ImageStore` and
+    `EventPublisher`: no bean at all is the local default, so tests and `bootRun` never touch
+    Application Default Credentials.
+  - Cloud Run wants a **Google-signed ID token whose audience is the target service's URL** — not an
+    access token. On Cloud Run the token comes from the metadata server through ADC, so there is no
+    key to manage; `IdTokenCredentials.getRequestMetadata()` caches and refreshes it. The only
+    cloud-side setup is `roles/run.invoker` for `wildalert-email-ingestion` on user-account.
+  - A token that cannot be minted is wrapped in `RestClientException`, so it takes the same
+    retry-then-degrade path as an unreachable user-account: never fail the webhook, never lose the
+    photo. Three new tests cover all of it (no header by default, the header when configured, and
+    the degrade path) — 9 in `HunterLookupClientTest`, `./gradlew build` green.
+  - **Not verified in the cloud yet** — it cannot be until email-ingestion is deployed. The proof
+    will be a non-null `matchedHunterId` from `CONSOLE.md` step 10e.
+
 ## Remaining Phase 6 work
-- **Provision Pub/Sub in GCP** (the code side is done — slice 4 below): 4 topics
-  (`image.received`, `animal.recognized`, + `.dlt` for each), 2 authenticated push subscriptions,
-  2 pull subscriptions on the dead-letter topics (**a topic with no subscription discards
-  messages**), runtime service accounts with `roles/pubsub.publisher` on the topic, a
-  `wildalert-pubsub-push` account with `roles/run.invoker` per service, and the Pub/Sub service
-  agent's `iam.serviceAccountTokenCreator` + dead-letter grants.
-- Deploy the other three services; grant them `roles/run.invoker` on user-account.
+- **Pub/Sub provisioning is part-done** (verified 2026-10-14 with `gcloud pubsub topics/subscriptions
+  list`): the four topics exist (`image.received`, `animal.recognized`, + `.dlt` for each), as do
+  three pull subscriptions — `image.received.inspect` (how the event can be read with no consumer
+  deployed) and the two `.dlt.inspect` ones (**a topic with no subscription discards messages**).
+  Still missing, because they need the consumers' URLs: the two authenticated **push**
+  subscriptions, `wildalert-pubsub-push` with `roles/run.invoker` per service, `wildalert-recognition`
+  with `roles/pubsub.publisher` on `animal.recognized`, and the Pub/Sub service agent's
+  `iam.serviceAccountTokenCreator` + dead-letter grants. `wildalert-email-ingestion` exists but
+  **holds no roles yet** — it needs publisher on `image.received`, invoker on user-account and
+  accessor on its three secrets.
+- **Deploy email-ingestion next** — it is the blocker for the domain, because the Email Worker needs
+  its URL as a secret. `deploy/CONSOLE.md` steps 10a-10e are the click-by-click: R2 bucket, three
+  secrets, a second build trigger, the deploy form (**Allow unauthenticated** — the only service
+  deployed that way), the two grants, and a `curl` verification that ends in a non-null
+  `matchedHunterId`.
+- Then recognition and notification; notification also needs `roles/run.invoker` on user-account.
 - Domain + Cloudflare Email Routing. **Worker written (2026-10-14): `deploy/email-worker/`** —
   `src/worker.js` POSTs the raw RFC-822 bytes to `/api/emails?envelopeTo=<message.to>` with the
   `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README. Untested until
@@ -281,9 +311,11 @@ longer exist in the repo, but what each slice proved still holds._
   `animalrecognition@gmail.com`** (the verified destination address) and a real test email
   arrived there — so DNS, MX, SPF and the catch-all rule are all proven before our own service
   is involved. No DMARC record, which is fine while we only receive.
-  Still to do: deploy the worker, switch the catch-all from *Send to an email* to
-  **Send to a Worker** (`wildalert-email-in`), and set `INBOUND_EMAIL_DOMAIN=wildalert.app`.
-  Hunters created before that carry placeholder addresses and need new tokens.
+  Still to do (all three need email-ingestion's URL first): deploy the worker, switch the catch-all
+  from *Send to an email* to **Send to a Worker** (`wildalert-email-in`), and set
+  `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. Existing hunters need **no new tokens** —
+  `InboundAddresses` stores only the token and reads the domain from config, so their addresses
+  move with the revision (an earlier note here said otherwise).
   - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
     Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
     Cloudflare API call during registration. Hunter addresses therefore live on the apex

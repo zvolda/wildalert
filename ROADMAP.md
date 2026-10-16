@@ -241,14 +241,28 @@ then the async flow, then deploy, then scale.
 - **Goal / learn:** deploying containers to a managed platform + managed data services.
 - **Deliverable:** the whole system running in the cloud on a real domain.
 - **Tasks:**
-  - [ ] Managed Postgres — **Cloud SQL** (preferred for experience) or Neon/Supabase
+  - [x] Managed Postgres — **Cloud SQL** `wildalert-db` (PostgreSQL 18, db-f1-micro, europe-west3),
+        provisioned by hand in the console 2026-10-07
   - [x] Broker — **Cloud Pub/Sub push subscriptions** (decided 2026-10-08; see Open Decisions).
-        Code + local emulator done; topics, subscriptions and IAM still to provision.
-  - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible
-  - [ ] Warm the recognition model at startup (reduce cold-start delay)
-  - [ ] Domain + Cloudflare Email Routing pointed at deployed ingestion — **catch-all on the
-        apex** (`*@<domain>`) so every hunter's personal address reaches the webhook, via the
-        Email Worker in `deploy/email-worker/`. **Not a subdomain:** Cloudflare offers a
+        Code + local emulator done; the four topics and the `.dlt.inspect` pull subscriptions are
+        provisioned. The two **push** subscriptions need the consumers' URLs, so they come with them.
+  - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible —
+        user-account live 2026-10-08; email-ingestion next (public, the webhook); recognition and
+        notification after it
+  - [x] **Service-to-service authentication** — user-account requires authentication, so callers
+        mint a Google **ID token whose audience is the target URL** (`UserAccountAuth` in
+        email-ingestion, `USER_ACCOUNT_AUTH=gcp-id-token`) and need `roles/run.invoker` on it.
+        Notification needs the same treatment when it deploys.
+  - [x] Warm the recognition model at startup (FastAPI lifespan, ~1 min at boot instead of inside
+        the first pushed event)
+  - [~] Domain + Cloudflare Email Routing pointed at deployed ingestion. **`wildalert.app`
+        registered, Email Routing live and receiving mail (2026-10-14)**; the Email Worker is
+        written (`deploy/email-worker/`). What remains is `wrangler deploy`, switching the
+        catch-all from *Send to an email* to *Send to a Worker*, and
+        `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account — all of which need email-ingestion's
+        Cloud Run URL to exist first.
+        Design: **catch-all on the apex** (`*@<domain>`), so every hunter's personal address
+        reaches the webhook with no per-hunter setup. **Not a subdomain:** Cloudflare offers a
         catch-all on the apex only; a subdomain needs one explicit routing rule per address,
         which would put a Cloudflare API call inside hunter registration. Explicit custom
         addresses still beat the catch-all, so `hello@<domain>` can forward to a real mailbox.

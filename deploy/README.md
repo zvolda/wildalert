@@ -34,11 +34,30 @@ gets entered.
 | Password secret | `wildalert-db-password` (global secret, automatic replication) |
 | Service account | `wildalert-user-account@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor` — nothing else |
-| `INBOUND_EMAIL_DOMAIN` | `wildalert.local` — placeholder until `wildalert.app` is registered; then the **apex**, not a subdomain |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.app` — the **apex** of the Cloudflare zone, not a subdomain (registered 2026-10-14; the deployed revision still says `in.wildalert.local` until it is updated) |
+
+### email-ingestion — the public one
+
+| Setting | Value |
+|---|---|
+| Cloud Run service | `email-ingestion`, europe-west3, **Allow unauthenticated**, ingress All, min/max 0/3, 1 vCPU / 1 GiB |
+| Service account | `wildalert-email-ingestion@wildalert-prod.iam.gserviceaccount.com` |
+| Service account roles | `roles/pubsub.publisher` **on topic** `image.received`, `roles/run.invoker` **on service** `user-account`, `roles/secretmanager.secretAccessor` **per secret** (the three below) |
+| Secrets | `wildalert-webhook-secret` → `WEBHOOK_SECRET`, `wildalert-r2-access-key` → `R2_ACCESS_KEY`, `wildalert-r2-secret-key` → `R2_SECRET_KEY` |
+| Env | `SPRING_PROFILES_ACTIVE=pubsub`, `USER_ACCOUNT_BASE_URL=https://user-account-lznkorfm4q-ey.a.run.app`, `USER_ACCOUNT_AUTH=gcp-id-token`, `STORAGE_PROVIDER=r2`, `R2_ENDPOINT`, `R2_BUCKET=wildalert-images` |
+| Image storage | Cloudflare R2 bucket `wildalert-images` (EU), scoped Object Read & Write API token |
+| Build trigger | `email-ingestion-main` — same `cloudbuild.yaml`, `_SERVICE=email-ingestion` |
+
+**It is public on purpose, and it is the only one.** Cloudflare Workers call in from outside Google
+Cloud, so there is no Google identity to grant `run.invoker` to; `WebhookAuthFilter`'s shared secret
+is the protection. **It authenticates *outwards* with an ID token** (`UserAccountAuth`,
+`USER_ACCOUNT_AUTH=gcp-id-token`), because user-account requires authentication — without the
+matching `run.invoker` grant every lookup 403s and, by design, degrades to "no hunter matched"
+rather than failing the webhook. So the symptom is silent: `matchedHunterId: null` with a 200.
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
 
-### Pub/Sub (not provisioned yet — the code and local emulator are done)
+### Pub/Sub (topics and the `.dlt.inspect` pull subscriptions exist; push subscriptions wait for the consumers)
 
 Events move on **Cloud Pub/Sub push subscriptions**: Pub/Sub POSTs each event to an HTTP endpoint,
 so the consumers need no client library and still scale to zero. Dead-letter topics use a `.dlt`
@@ -240,11 +259,15 @@ deployed.
 
 ## Not done yet in Phase 6
 
-- **The broker decision** — managed Kafka vs Cloud Pub/Sub push. See *Open Decisions* in
-  `ROADMAP.md`: the recognition worker is a pull consumer holding a multi-GB model, so on Cloud Run
-  it cannot scale to zero. This is the decision with real cost attached.
-- **The other three services**, which all depend on that decision.
-- **The domain and Cloudflare Email Routing**, including the Email Worker that POSTs the raw email
-  with `?envelopeTo=` and the `WEBHOOK_SECRET` header. Until then `INBOUND_EMAIL_DOMAIN` is a
-  placeholder, so inbound addresses generated now will need regenerating.
-- **`roles/run.invoker`** for email-ingestion and notification on user-account, once they exist.
+- **recognition and notification**: images, Cloud Run services, the two **push subscriptions** that
+  need their URLs, `wildalert-pubsub-push` with `run.invoker` per service, `wildalert-recognition`
+  with `pubsub.publisher` on `animal.recognized`, and the Pub/Sub service agent's
+  `iam.serviceAccountTokenCreator`. Until then `image.received` has a publisher and no consumer, so
+  no SMS is sent — read the event with `gcloud pubsub subscriptions pull image.received.inspect`.
+- **`roles/run.invoker` on user-account for notification**, once it exists (email-ingestion's is
+  part of its own deploy).
+- **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
+  it, and set `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. No tokens need regenerating —
+  only the token is stored, the domain comes from config.
+
+The broker decision is **settled**: Cloud Pub/Sub push, Kafka removed from the repo (2026-10-08).
