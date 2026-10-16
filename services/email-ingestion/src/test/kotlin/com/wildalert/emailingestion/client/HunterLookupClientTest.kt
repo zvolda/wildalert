@@ -2,17 +2,21 @@ package com.wildalert.emailingestion.client
 
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.test.web.client.ExpectedCount
 import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.header
+import org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist
 import org.springframework.test.web.client.match.MockRestRequestMatchers.method
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
 import org.springframework.test.web.client.response.MockRestResponseCreators.withException
 import org.springframework.test.web.client.response.MockRestResponseCreators.withStatus
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
+import org.springframework.web.client.RestClientException
 import java.net.ConnectException
 import java.util.UUID
 
@@ -91,6 +95,47 @@ class HunterLookupClientTest {
 
         assertThat(client.findByInboundAddress("stranger@example.com")).isNull()
         server.verify()
+    }
+
+    @Test
+    fun `no Authorization header when there is no UserAccountAuth - the local default`() {
+        server.expect(requestTo(lookupUrl("hunter@in.wildalert.local")))
+            .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
+            .andRespond(withSuccess("""{"id":"${UUID.randomUUID()}"}""", MediaType.APPLICATION_JSON))
+
+        client.findByInboundAddress("hunter@in.wildalert.local")
+
+        server.verify()
+    }
+
+    @Test
+    fun `sends the credential from UserAccountAuth when one is configured`() {
+        // In the cloud this is the Google ID token that gets us past Cloud Run's IAM check.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        val authorized = HunterLookupClient(builder, "http://user-account") { headers ->
+            headers.setBearerAuth("fake-id-token")
+        }
+        server.expect(requestTo(lookupUrl("hunter@in.wildalert.local")))
+            .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer fake-id-token"))
+            .andRespond(withSuccess("""{"id":"${UUID.randomUUID()}"}""", MediaType.APPLICATION_JSON))
+
+        authorized.findByInboundAddress("hunter@in.wildalert.local")
+
+        server.verify()
+    }
+
+    @Test
+    fun `a credential that cannot be minted degrades to no match instead of failing`() {
+        // Same contract as an unreachable user-account: never fail the webhook, never lose the photo.
+        var calls = 0
+        val failing = HunterLookupClient(RestClient.builder(), "http://user-account") {
+            calls++
+            throw RestClientException("no ID token")
+        }
+
+        assertThat(failing.findByInboundAddress("hunter@in.wildalert.local")).isNull()
+        assertThat(calls).isEqualTo(2)
     }
 
     private fun lookupUrl(address: String) =

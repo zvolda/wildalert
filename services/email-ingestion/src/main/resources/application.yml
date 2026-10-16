@@ -50,6 +50,10 @@ services:
   # Base URL of the user-account service, used to match a sender to a hunter.
   user-account:
     base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+    # 'none' (default) or 'gcp-id-token'. In the cloud user-account runs with Cloud Run's
+    # "Require authentication", so calls need a Google ID token whose audience is base-url;
+    # set USER_ACCOUNT_AUTH=gcp-id-token there. Locally there is nothing to authenticate to.
+    auth: ${USER_ACCOUNT_AUTH:none}
 
 events:
   # 'logging' (fake, default) or 'pubsub'. Prefer the 'pubsub' Spring profile, which sets this
