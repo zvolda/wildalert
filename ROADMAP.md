@@ -294,6 +294,18 @@ then the async flow, then deploy, then scale.
     own service account via `--service-account` and leave the compute default unused. Deliberately
     deferred out of Phase 6: doing it before the first green deploy means debugging IAM and the
     deploy at the same time. Don't delete/disable the account — bindings don't restore cleanly.
+  - [ ] **Scope `user-account`'s secret access down to the one secret it needs.** It holds
+    `roles/secretmanager.secretAccessor` **at project level**, granted from the console's "grant
+    this service account access to project" step (`CONSOLE.md` step 3) because that page is the
+    path of least resistance. Harmless while it was the only secret; since 2026-10-16 the project
+    also holds `wildalert-webhook-secret` and both R2 keys, which belong to email-ingestion, and
+    user-account can read all three. Replace the project-level role with a single binding on
+    `wildalert-db-password` (Secret Manager → that secret → Permissions), then deploy a revision
+    and confirm readiness still comes up: the password is read at startup, so a wrong grant shows
+    as a revision that never goes live rather than a runtime error. email-ingestion is already
+    done the right way — per-secret bindings, no project-level secret role — and is the pattern to
+    copy. Same instinct as the per-topic `pubsub.publisher` grants: the console's project-wide
+    offer is almost never what you want.
 - **DoD (review against):** smart-SMS mode measurably cuts SMS count; logs/metrics let you
   trace a request end-to-end; admin endpoints not publicly open.
 
