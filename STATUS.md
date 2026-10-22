@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-20. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-22. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -418,6 +418,43 @@ longer exist in the repo, but what each slice proved still holds._
     internet, so it cannot use Require authentication / internal ingress like the Pub/Sub
     consumers; `WebhookAuthFilter`'s shared secret is its protection, which is why that filter was
     built in slice 1.
+
+- **Slice 9 (done 2026-10-22, pending review): both consumer images build, and notification can
+  authenticate.**
+  - **Build config takes a context.** `deploy/cloudbuild.yaml` gained a `_CONTEXT` substitution
+    defaulting to `.`, so the two existing triggers are untouched while recognition passes
+    `services/recognition`. It had to exist: recognition's Dockerfile does `COPY requirements.txt .`
+    and `COPY app ./app`, which only resolve with the service directory as context — and the root
+    `.dockerignore` excludes `services/recognition/`, so in a root context those files are not even
+    sent. `notification:0340fa0` built in 120s, `recognition:0340fa0` in 360s.
+  - **A typo cost nothing only because it was caught before the first run.** The `recognition-main`
+    trigger had been created with `filename: deploy/claudbuild.yaml`; that build would have failed
+    on a missing file, which reads nothing like "your context substitution is wrong". Fixed by
+    `gcloud beta builds triggers export`, editing the file and re-importing —
+    `gcloud builds triggers update github --build-config=…` rejects it with a bare
+    `INVALID_ARGUMENT`. Worth checking `filename` on every new trigger.
+  - **notification would never have sent an SMS.** `HunterClient` sent no credential, and
+    user-account requires authentication, so Cloud Run would answer 403 *in front of the app*;
+    `Forbidden` is not the `NotFound` it catches, so the push returns 5xx, Pub/Sub retries five
+    times and the alert is dead-lettered — a service that looks healthy and texts nobody. Found by
+    reading the code while writing the deploy form, not by a test. Ported `UserAccountAuth` +
+    `GcpIdTokenUserAccountAuth` into `com.wildalert.notification.hunter` as a deliberate copy
+    (≈30 lines of infrastructure, no domain; same call this project already makes for the event
+    contracts), with `google-auth-library-oauth2-http` declared explicitly — email-ingestion only
+    gets it transitively from the Pub/Sub starter. **The failure contract is inverted on purpose:**
+    email-ingestion degrades to "no hunter" so a photo is never lost; notification throws, because
+    the photo is already stored and a redelivery still gets the SMS out.
+  - **`postgres-socket-factory` was missing too**, so `IDEMPOTENCY_STORE=postgres` could not have
+    connected through its `socketFactory` URL. Added at user-account's version (1.28.4), which
+    keeps the shared idempotency store usable rather than falling back to the per-instance one.
+  - **Tests:** 3 new in `HunterClientTest` (no header by default, the header when configured, and
+    an unmintable token thrown rather than swallowed); `:services:notification:build` green, 34
+    tests, 0 failures.
+  - **Deploy forms written** for both services as `CONSOLE.md` steps 10f and 10g, including the
+    thing that drives recognition's settings: **the model loads lazily on first use**
+    (`@lru_cache` on `_load_deepfaune`, import inside the function), so the container starts in
+    seconds and the startup probe passes immediately, but the first real message pays the weight
+    load *inside its own request*. That is why the ack deadline and request timeout are both 600s.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only

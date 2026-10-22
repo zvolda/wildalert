@@ -18,11 +18,17 @@ data class HunterContact(
  * Calls the user-account service to get a hunter's phone number. A 404 (hunter deleted since the
  * photo arrived) maps to null. Any other failure — e.g. user-account down — is thrown on purpose,
  * so the push returns 5xx and Pub/Sub redelivers, instead of silently dropping the hunter's alert.
+ *
+ * [auth] is absent locally (user-account is open on localhost) and supplied in the cloud, where
+ * user-account requires authentication. A missing credential is **not** a visible error: Cloud Run
+ * answers 403, which is not the `NotFound` caught below, so the alert is retried and then
+ * dead-lettered. See [UserAccountAuth].
  */
 @Component
 class HunterClient(
     builder: RestClient.Builder,
     @Value("\${services.user-account.base-url}") baseUrl: String,
+    private val auth: UserAccountAuth? = null,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -32,6 +38,7 @@ class HunterClient(
         try {
             restClient.get()
                 .uri("/api/hunters/{id}", id)
+                .headers { headers -> auth?.authorize(headers) }
                 .retrieve()
                 .body(HunterContact::class.java)
         } catch (ex: HttpClientErrorException.NotFound) {
