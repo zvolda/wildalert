@@ -41,7 +41,7 @@ gets entered.
 | Setting | Value |
 |---|---|
 | Cloud Run service | `email-ingestion`, europe-west3, **Allow unauthenticated**, ingress All, min/max 0/3, 1 vCPU / 1 GiB |
-| Service URL | `https://email-ingestion-789527844011.europe-west3.run.app` (deployed 2026-10-19, revision `email-ingestion-00002-nf9`) |
+| Service URL | `https://email-ingestion-lznkorfm4q-ey.a.run.app` — what `gcloud run services describe` reports, and the form to use for `INGESTION_URL` and any token audience. The project-number form `https://email-ingestion-789527844011.europe-west3.run.app` also answers on the same service (both verified 200); keep one form everywhere. Deployed 2026-10-19, revision `email-ingestion-00002-nf9`. |
 | Service account | `wildalert-email-ingestion@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/pubsub.publisher` **on topic** `image.received`, `roles/run.invoker` **on service** `user-account`, `roles/secretmanager.secretAccessor` **per secret** (the three below) |
 | Secrets | `wildalert-webhook-secret` → `WEBHOOK_SECRET`, `wildalert-r2-access-key` → `R2_ACCESS_KEY`, `wildalert-r2-secret-key` → `R2_SECRET_KEY` |

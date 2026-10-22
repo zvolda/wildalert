@@ -37,3 +37,7 @@ Thumbs.db
 
 # Local image storage (storage.provider=filesystem)
 /data/
+
+# Wrangler's local cache (account id + name). Not a credential -- the OAuth token lives in
+# %APPDATA%/xdg.config/.wrangler -- but it is machine state, not source.
+deploy/email-worker/.wrangler/

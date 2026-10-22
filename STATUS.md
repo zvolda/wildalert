@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-19. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-20. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -127,10 +127,19 @@ longer exist in the repo, but what each slice proved still holds._
     → 404. The 200 case also proved the resilience fix — user-account was *not* running, and the
     log shows one retry then "treating it as no match" instead of a 500. Against user-account
     with Postgres stopped/started: readiness 503↔200 while liveness stayed 200.
-  - **Still open (structural):** matching the hunter inside the synchronous webhook means a real
-    user-account outage silently costs alerts. The clean fix is to publish the recipient address
-    on the event and resolve the hunter in notification instead; `min-instances=1` on user-account
-    sidesteps the cold-start case in the meantime.
+  - **Still open (structural), and it fired for real on 2026-10-20.** Matching the hunter inside the
+    synchronous webhook means a real user-account outage silently costs alerts — but the trigger
+    turns out to be far more routine than an outage. The first email through Cloudflare hit a
+    **scaled-to-zero user-account** and both lookup attempts timed out:
+    `I/O error … "Request cancelled"; retrying once` at 12:37:53, gave up at 12:37:58. The read
+    timeout is 5s and a cold Spring Boot + Flyway + Cloud SQL start takes longer, so the retry
+    — fired 5s later, still during the same boot — was doomed too. The photo was stored and published
+    with `hunterId: null`, the webhook answered 200, and nothing in the response said why.
+    **So in production the first photo after any idle period loses its SMS.** Three ways out:
+    raise the read timeout to ~15s with a backing-off retry (cheap, keeps scale-to-zero);
+    `min-instances=1` on user-account (~$10/month, gives up scale-to-zero); or the clean fix —
+    publish the recipient address on the event and resolve the hunter in **notification**, where
+    Pub/Sub's own retries absorb a cold start. Phase 7 decision.
 
 - **Slice 2 (infrastructure provisioned, service not yet deployed):** **Cloud SQL** (an explicit
   learning target) in **europe-west3**, all of it created **by hand in the Cloud Console** rather
@@ -314,13 +323,16 @@ longer exist in the repo, but what each slice proved still holds._
     it could still be verified here. See slice 7.
 
 - **Slice 7 (done 2026-10-19, pending review): email-ingestion is live in Google Cloud.**
-  `https://email-ingestion-789527844011.europe-west3.run.app`, revision `email-ingestion-00002-nf9`,
+  `https://email-ingestion-lznkorfm4q-ey.a.run.app`, revision `email-ingestion-00002-nf9`,
   image `email-ingestion:71d9c34`, **public** (`allUsers` → `roles/run.invoker`, the only such
   service), ingress All, min/max 0/3, 1 vCPU / 1 GiB, `wildalert-email-ingestion` service account.
   All six env vars and all three secret references were read back off the service template rather
-  than trusted to the command line. Note the **new-style URL** (project number, not the `-ey` hash
-  user-account got) — both forms are current, and the audience string for ID tokens is whatever the
-  target service's own URL says.
+  than trusted to the command line. **It answers on two URLs:** the `-ey` form above, which is what
+  `describe` reports, and a project-number form
+  (`https://email-ingestion-789527844011.europe-west3.run.app`) — both verified 200 against the same
+  revision. The deploy output printed the project-number one, which is how it first got written down
+  here. Harmless for this service because nothing mints tokens *for* it, but pick one form and keep
+  it everywhere: an ID token's audience must match the URL string exactly.
   - **The deploy failed first, and the cause is worth keeping.** Git Bash's MSYS path conversion
     rewrote `--startup-probe=httpGet.path=/actuator/health/readiness` into
     `httpGet.path=C:/Program Files/Git/actuator/health/readiness` *before gcloud saw it*, so the
@@ -362,6 +374,51 @@ longer exist in the repo, but what each slice proved still holds._
     objects under `inbound/2026/10/19/` in R2. The hunter is the easiest way to re-run 10e; delete
     both when Phase 6 closes.
 
+- **Slice 8 (done 2026-10-20, pending review): real inbound email works.**
+  Worker written 2026-10-14 in `deploy/email-worker/` —
+  `src/worker.js` POSTs the raw RFC-822 bytes to `/api/emails?envelopeTo=<message.to>` with the
+  `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README.
+  **`wildalert.app` is registered (2026-10-14, Cloudflare Registrar)** and the zone is served by
+  Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`).
+  **Email Routing is enabled and receiving mail (2026-10-14).** Verified from two resolvers
+  outside Cloudflare (8.8.8.8 and 1.1.1.1): `MX` → `route1/2/3.mx.cloudflare.net` (priorities
+  45/70/91) and `TXT` → `v=spf1 include:_spf.mx.cloudflare.net ~all`. The apex had no MX/TXT
+  before this, so nothing was overwritten. A **temporary catch-all forwards to
+  `animalrecognition@gmail.com`** (the verified destination address) and a real test email
+  arrived there — so DNS, MX, SPF and the catch-all rule are all proven before our own service
+  is involved. No DMARC record, which is fine while we only receive.
+  **Live on 2026-10-20.** Worker deployed (`wildalert-email-in`, version `3e7572c7`) with two
+  secrets — `INGESTION_URL` = `https://email-ingestion-lznkorfm4q-ey.a.run.app` and
+  `WEBHOOK_SECRET` piped straight from Secret Manager so the value was never pasted or printed.
+  Catch-all switched from *forward → Gmail* to **worker → `wildalert-email-in`**, and
+  `INBOUND_EMAIL_DOMAIN=wildalert.app` set on user-account (revision `user-account-00002-w8n`), which
+  moved the test hunter to `pwjpd75ivta9@wildalert.app` with no new token, as designed.
+  - **Proven with two real emails from Gmail**, read off `wrangler tail` and the Cloud Run logs:
+    `nobody@wildalert.app` → worker `delivered 41682B … -> 200`, stored, `hunterId: null`; then
+    `pwjpd75ivta9@wildalert.app` → `delivered 41684B … -> 200`, **`hunterId:
+    a87cf72a-…`**. Both photos in R2 (25086 bytes each) and both events pulled off
+    `image.received.inspect`. Worker CPU time **1 ms** against the free plan's 10 ms budget, so
+    streaming the body rather than buffering it is doing its job.
+  - **Two Wrangler potholes.** `wrangler deploy` **uploads the script and then fails anyway** when
+    the worker has no routes — it falls back to publishing on workers.dev, which needs a subdomain
+    you may not have registered, so the command exits 1 while the worker is live and serving.
+    `workers_dev = false` in `wrangler.toml` fixes it (committed). And `wrangler email routing rules
+    update … --action-type worker` is refused by the CLI's own validation ("Catch-all rule only
+    supports 'forward' or 'drop'") even though the dashboard and the REST API both allow it; the
+    newer Wrangler that might fix it needs Node ≥22 and this machine has v20. The catch-all was
+    therefore switched by hand in the dashboard.
+  - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
+    Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
+    Cloudflare API call during registration. Hunter addresses therefore live on the apex
+    (`<token>@wildalert.app`). Costs nothing in code — `InboundAddresses` reads the domain from
+    config — and human mail still works, because explicit addresses are matched before the
+    catch-all. Price paid: the apex MX is Cloudflare's, so no other provider can host mailboxes
+    on it later.
+  - **email-ingestion must be the one public Cloud Run service.** Workers call in over the public
+    internet, so it cannot use Require authentication / internal ingress like the Pub/Sub
+    consumers; `WebhookAuthFilter`'s shared secret is its protection, which is why that filter was
+    built in slice 1.
+
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
   publishes; a push subscription needs a URL to push *to*): the two authenticated **push**
@@ -376,38 +433,6 @@ longer exist in the repo, but what each slice proved still holds._
   it: without one it inherits the default compute service account, which still holds
   `roles/editor`, so its user-account lookups would succeed *by accident* and slice 5's ID-token
   path would never actually be exercised.
-- Domain + Cloudflare Email Routing. **Worker written (2026-10-14): `deploy/email-worker/`** —
-  `src/worker.js` POSTs the raw RFC-822 bytes to `/api/emails?envelopeTo=<message.to>` with the
-  `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README. Untested until
-  email-ingestion has a URL.
-  **`wildalert.app` is registered (2026-10-14, Cloudflare Registrar)** and the zone is served by
-  Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`).
-  **Email Routing is enabled and receiving mail (2026-10-14).** Verified from two resolvers
-  outside Cloudflare (8.8.8.8 and 1.1.1.1): `MX` → `route1/2/3.mx.cloudflare.net` (priorities
-  45/70/91) and `TXT` → `v=spf1 include:_spf.mx.cloudflare.net ~all`. The apex had no MX/TXT
-  before this, so nothing was overwritten. A **temporary catch-all forwards to
-  `animalrecognition@gmail.com`** (the verified destination address) and a real test email
-  arrived there — so DNS, MX, SPF and the catch-all rule are all proven before our own service
-  is involved. No DMARC record, which is fine while we only receive.
-  **All three are unblocked as of 2026-10-19** — email-ingestion now has a URL
-  (`https://email-ingestion-789527844011.europe-west3.run.app`, slice 7): deploy the worker with
-  that URL and the webhook secret, switch the catch-all from *Send to an email* to **Send to a
-  Worker** (`wildalert-email-in`), and set `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account.
-  Note that setting the domain changes every hunter's inbound address, so re-run 10e against the new
-  address afterwards — the 10e test hunter's is currently `pwjpd75ivta9@in.wildalert.local`. Existing hunters need **no new tokens** —
-  `InboundAddresses` stores only the token and reads the domain from config, so their addresses
-  move with the revision (an earlier note here said otherwise).
-  - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
-    Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
-    Cloudflare API call during registration. Hunter addresses therefore live on the apex
-    (`<token>@wildalert.app`). Costs nothing in code — `InboundAddresses` reads the domain from
-    config — and human mail still works, because explicit addresses are matched before the
-    catch-all. Price paid: the apex MX is Cloudflare's, so no other provider can host mailboxes
-    on it later.
-  - **email-ingestion must be the one public Cloud Run service.** Workers call in over the public
-    internet, so it cannot use Require authentication / internal ingress like the Pub/Sub
-    consumers; `WebhookAuthFilter`'s shared secret is its protection, which is why that filter was
-    built in slice 1.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
