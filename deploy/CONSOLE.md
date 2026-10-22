@@ -724,6 +724,114 @@ step 11b fixes.
 
 ---
 
+## Step 10f — Deploy notification to Cloud Run
+
+**Two code changes made this deployable (2026-10-22), and both were invisible from the form.**
+
+1. **`HunterClient` sent no credential.** user-account runs with *Require authentication*, so Cloud
+   Run answers **403** in front of the app. `HttpClientErrorException.Forbidden` is not the
+   `NotFound` that `HunterClient` catches, so it propagated, the push returned 5xx, Pub/Sub retried
+   five times and the alert landed in `animal.recognized.dlt` — **never an SMS, with nothing
+   obviously wrong with the service.** The same bug email-ingestion had before Phase 6 slice 5.
+   `UserAccountAuth` + `GcpIdTokenUserAccountAuth` are now in
+   `com.wildalert.notification.hunter`, applied via `.headers { auth?.authorize(it) }`, switched on
+   by `services.user-account.auth=gcp-id-token`. Note the contract is the *opposite* of
+   email-ingestion's: there an unmintable token degrades to "no hunter" so the photo is never lost;
+   here the photo is already stored, so it throws and Pub/Sub redelivers.
+2. **No Cloud SQL socket factory.** `IDEMPOTENCY_STORE=postgres` needs
+   `com.google.cloud.sql:postgres-socket-factory`, which user-account had and notification did not,
+   so the `socketFactory` JDBC URL could not connect. Added at the same version (1.28.4).
+
+`google-auth-library-oauth2-http` is declared explicitly here: email-ingestion gets it transitively
+from the Pub/Sub starter, but this service has no other GCP dependency — a push subscription is
+just an HTTP POST.
+
+**Navigation:** Cloud Run → **Deploy container** → **Service**
+
+| Field | Value |
+|---|---|
+| Container image | `…/wildalert/notification:0340fa0` |
+| Service name | `notification`, region `europe-west3` |
+| Authentication | **Require authentication** — Pub/Sub pushes with an OIDC token |
+| Ingress | **All** at first; tighten once it works |
+| Auto-scaling | min **0**, max **3** |
+| CPU / Memory | **1** / **1 GiB** |
+| Container port | **8080** |
+| Request timeout | **60s**, matching the subscription's ack deadline |
+| Service account | `wildalert-notification@…` |
+| Startup probe | `/actuator/health/readiness` |
+
+| Env | Value |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `pubsub` — turns on the push endpoint; the profile is deliberately thin because a push subscription is just an authenticated POST |
+| `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` (no trailing slash; it is also the token audience) |
+| `USER_ACCOUNT_AUTH` | `gcp-id-token` |
+| `SMS_PROVIDER` | `logging` until Twilio is wired; the fake sender logs what it would send |
+| `IDEMPOTENCY_STORE` | **`postgres`** — the shared store, so a redelivery landing on a different instance cannot send a second SMS. `memory` works but is per-instance |
+
+`postgres` also needs `DATABASE_URL` (the same `socketFactory` URL user-account uses),
+`POSTGRES_USER=wildalert`, the `wildalert-db-password` secret as `POSTGRES_PASSWORD`, a **Cloud SQL
+connection attached**, and for `wildalert-notification`: `roles/cloudsql.client` plus a **per-secret**
+accessor binding on `wildalert-db-password`. Flyway creates its own `notification` schema with its
+own history, so it will not collide with user-account's migrations.
+
+**Grants:** `roles/run.invoker` on **user-account** for `wildalert-notification` (the lookup), and
+`roles/run.invoker` on **notification** for `wildalert-pubsub-push` (the push).
+
+---
+
+## Step 10g — Deploy recognition to Cloud Run
+
+The expensive one, and the only service where "scales to zero" and "responds promptly" genuinely
+conflict. **The model is loaded lazily on first use** (`app/classifier.py`, `@lru_cache` around
+`_load_deepfaune`, with the import inside the function), so the container starts in seconds and the
+startup probe passes immediately — but **the first real message pays the weight load inside its own
+request**, on top of a multi-GB image pull. That is what the long timeouts are for; it is not
+slack.
+
+**Navigation:** Cloud Run → **Deploy container** → **Service**
+
+| Field | Value | Why |
+|---|---|---|
+| Container image | `…/wildalert/recognition:0340fa0` | |
+| Service name | `recognition`, region `europe-west3` | |
+| Authentication | **Require authentication** | Pub/Sub pushes with an OIDC token |
+| Ingress | **All** at first | same-project push *should* satisfy internal ingress; don't debug ingress and IAM at once |
+| Memory | **4 GiB** | torch + MegaDetector + DeepFaune; 1 GiB cannot load them |
+| CPU | **2** | |
+| Concurrency | **1** | inference is CPU-bound — parallel requests on one instance only make each slower |
+| Request timeout | **600s** | must exceed cold start + model load + inference, and match the ack deadline |
+| Auto-scaling | min **0**, max **3** | min 1 on a 4 GiB instance is real monthly money; max 3 caps spend |
+| Startup CPU boost | **on** | shortens the load |
+| Startup probe | leave the **default TCP check** | uvicorn binds before the model exists, so an HTTP probe proves nothing extra — and from Git Bash the probe path gets mangled (see `README.md` troubleshooting) |
+| Service account | `wildalert-recognition@…` | already holds `pubsub.publisher` on `animal.recognized` |
+
+| Env | Value |
+|---|---|
+| `RECOGNITION_IMAGE_SOURCE` | `r2` |
+| `R2_ENDPOINT` | `https://5cc5a66ab391cec2270baa611d2a0a6d.r2.cloudflarestorage.com` |
+| `R2_BUCKET` | `wildalert-images` |
+| `RECOGNITION_EVENTS_PROVIDER` | `pubsub` |
+| `PUBSUB_PROJECT_ID` | `wildalert-prod` |
+
+Secrets — **Reference a secret**, as env vars: `wildalert-r2-access-key` → `R2_ACCESS_KEY`,
+`wildalert-r2-secret-key` → `R2_SECRET_KEY` (both already carry a per-secret accessor binding for
+`wildalert-recognition`).
+
+**Do not set `RECOGNITION_CLASSIFIER`** — the image's own `ENV RECOGNITION_CLASSIFIER=deepfaune`
+already selects the real model, and overriding it with the default `stub` would produce a service
+that answers happily with invented species.
+
+**`PUBSUB_PROJECT_ID` is not optional.** `config.py` falls back to `GOOGLE_CLOUD_PROJECT`, with a
+comment saying Cloud Run sets it. Cloud Run's documented reserved variables are `PORT`, `K_SERVICE`,
+`K_REVISION` and `K_CONFIGURATION` — the Kotlin services get the project from the *metadata server*
+instead, not from an env var. Setting it explicitly makes the question moot; the first revision's
+logs will settle whether the fallback would ever have worked.
+
+**Grant:** `roles/run.invoker` on **recognition** for `wildalert-pubsub-push`.
+
+---
+
 ## Step 11 — Pub/Sub (for the event-driven services, not user-account)
 
 Not needed to run `user-account`, which is plain HTTP. Do this when email-ingestion, recognition and

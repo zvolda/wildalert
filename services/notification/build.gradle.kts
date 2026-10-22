@@ -37,6 +37,17 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     runtimeOnly("org.postgresql:postgresql")
 
+    // Cloud SQL from Cloud Run: named as the JDBC socketFactory in DATABASE_URL, so connecting
+    // needs no password over TCP and no IP allowlist. Same version user-account uses.
+    runtimeOnly("com.google.cloud.sql:postgres-socket-factory:1.28.4")
+
+    // Mints the Google ID token our calls to a private user-account need (GcpIdTokenUserAccountAuth).
+    // email-ingestion gets this transitively from the Pub/Sub starter; this service has no other GCP
+    // dependency — a push subscription is just an HTTP POST — so it is declared here. The BOM is
+    // metadata only and keeps the version aligned with email-ingestion's (1.47.0 today).
+    implementation(platform("com.google.cloud:spring-cloud-gcp-dependencies:7.4.9"))
+    implementation("com.google.auth:google-auth-library-oauth2-http")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 
