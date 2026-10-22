@@ -708,9 +708,12 @@ A non-null `matchedHunterId` is the real prize: it proves the ID token was minte
 so `run.invoker` is granted. Then confirm the two side effects:
 
 ```bash
-# The event reached Pub/Sub. This subscription exists so the topic can be read with no consumer:
-gcloud pubsub subscriptions pull image.received.inspect --limit 5 --auto-ack \
-  --format="value(message.data.decode(base64))"
+# The event reached Pub/Sub. NOTE: image.received.inspect was deleted on 2026-10-22, once
+# recognition consumed the topic for real -- a pull subscription on a live topic is a second
+# consumer that quietly retains every event. Recreate it if you need this check again:
+#   gcloud pubsub subscriptions create image.received.inspect --topic=image.received
+# Otherwise read recognition's own log, which prints the event it received:
+gcloud run services logs read recognition --region europe-west3 --limit 20
 # {"storageKey":"...","contentType":"image/jpeg","senderEmail":"camera@example.com","hunterId":"..."}
 
 # The bytes reached R2: Cloudflare dashboard → R2 → wildalert-images → the object with that key.
@@ -766,7 +769,7 @@ just an HTTP POST.
 | `SPRING_PROFILES_ACTIVE` | `pubsub` — turns on the push endpoint; the profile is deliberately thin because a push subscription is just an authenticated POST |
 | `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` (no trailing slash; it is also the token audience) |
 | `USER_ACCOUNT_AUTH` | `gcp-id-token` |
-| `SMS_PROVIDER` | `logging` until Twilio is wired; the fake sender logs what it would send |
+| `SMS_PROVIDER` | `logging` (fake, logs what it would send), `gosms` or `twilio` |
 | `IDEMPOTENCY_STORE` | **`postgres`** — the shared store, so a redelivery landing on a different instance cannot send a second SMS. `memory` works but is per-instance |
 
 `postgres` also needs `DATABASE_URL` (the same `socketFactory` URL user-account uses),
@@ -777,6 +780,45 @@ own history, so it will not collide with user-account's migrations.
 
 **Grants:** `roles/run.invoker` on **user-account** for `wildalert-notification` (the lookup), and
 `roles/run.invoker` on **notification** for `wildalert-pubsub-push` (the push).
+
+### Sending real SMS: GoSMS, not Twilio
+
+Twilio wants **$12/month to lease a number**, and its free alphanumeric sender needs ~3 weeks of
+pre-registration in Czechia and a paid account. [GoSMS](https://gosms.eu) is Czech, has **no monthly
+fee at all**, costs from ~0.26 Kč per message, registers individuals (several Czech gateways
+require an IČO), and credits 20 Kč for verifying your phone — enough to test the whole pipeline for
+nothing. `GoSmsSender` is the implementation; `TwilioSmsSender` stays in the codebase as a fallback.
+
+From the GoSMS admin panel take the **client id**, **client secret** and the numeric **channel id**
+(the channel decides the sender shown on the phone and the per-message price). Then:
+
+| Env | Value |
+|---|---|
+| `SMS_PROVIDER` | `gosms` |
+| `GOSMS_CHANNEL` | the numeric channel id |
+
+Secrets — **Reference a secret**, as env vars, with a **per-secret** accessor binding for
+`wildalert-notification`:
+
+| Secret | Env var |
+|---|---|
+| `wildalert-gosms-client-id` | `GOSMS_CLIENT_ID` |
+| `wildalert-gosms-client-secret` | `GOSMS_CLIENT_SECRET` |
+
+**Check the credentials before deploying.** GoSMS has a `/api/v1/messages/test` endpoint that
+validates a message — credentials, channel and recipient format — **without sending it or spending
+credit**:
+
+```bash
+TOKEN=$(curl -s -X POST https://app.gosms.eu/oauth/v2/token   -d client_id="$(gcloud secrets versions access latest --secret=wildalert-gosms-client-id)"   -d client_secret="$(gcloud secrets versions access latest --secret=wildalert-gosms-client-secret)"   -d grant_type=client_credentials | python -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -o /dev/null -w '%{http_code}
+' -X POST https://app.gosms.eu/api/v1/messages/test   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"message":"WildAlert test","recipients":["+420XXXXXXXXX"],"channel":N}'
+# 200 = everything is right. 401 = credentials; 4xx with a body = channel or number format.
+```
+
+A hunter's `phone` must be the real number in E.164 — the 10e test hunter carries a deliberately
+fake `+420100000000`, which the gateway will reject.
 
 ---
 
@@ -971,9 +1013,11 @@ Email Routing retries a worker that throws — including on a 401 from a mismatc
 why step 3 above matters more than it looks. A bounce, by contrast, makes some senders (Outlook)
 retry hourly for hours.
 
-**Up to here the SMS still does not arrive**, and that is expected: `image.received` has no
-consumer until recognition is deployed (step 11 and `ROADMAP.md`'s remaining Phase 6 work). The
-`image.received.inspect` subscription is how you read the event in the meantime.
+**Following these steps in order, the SMS does not arrive until recognition and notification are
+deployed** (steps 10f, 10g and 11) — `image.received` has a publisher and no consumer before that.
+Read the event from recognition's log once it exists, or create a temporary pull subscription on
+the topic. **As of 2026-10-22 the full chain is live:** a photo emailed to a hunter's address
+produced `[FAKE SMS] … "WildAlert: wild boar detected (99% confidence)"` nine seconds later.
 
 ---
 

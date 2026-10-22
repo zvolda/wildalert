@@ -278,8 +278,10 @@ deployed.
 - **recognition and notification**: images, Cloud Run services, the two **push subscriptions** that
   need their URLs, `wildalert-pubsub-push` with `run.invoker` per service, `wildalert-recognition`
   with `pubsub.publisher` on `animal.recognized`, and the Pub/Sub service agent's
-  `iam.serviceAccountTokenCreator`. Until then `image.received` has a publisher and no consumer, so
-  no SMS is sent — read the event with `gcloud pubsub subscriptions pull image.received.inspect`.
+  `iam.serviceAccountTokenCreator`. **All of this was done on 2026-10-22** — both services are
+  deployed, both push subscriptions exist, and a real emailed photo produced an SMS nine seconds
+  later. `image.received.inspect`, the pull subscription used to read events while there was no
+  consumer, was deleted the same day; recognition's own log now shows what it received.
 - **`roles/run.invoker` on user-account for notification**, once it exists (email-ingestion's is
   part of its own deploy).
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at

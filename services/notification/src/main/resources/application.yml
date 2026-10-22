@@ -50,8 +50,16 @@ idempotency:
   store: ${IDEMPOTENCY_STORE:memory}
 
 sms:
-  # 'logging' (fake, default) or 'twilio'
+  # 'logging' (fake, default), 'gosms' or 'twilio'
   provider: ${SMS_PROVIDER:logging}
+  # GoSMS (gosms.eu) -- Czech gateway, no monthly fee. OAuth2 client credentials from the
+  # admin panel; 'channel' is the numeric sending channel, which decides the sender shown on
+  # the phone and the per-message price.
+  gosms:
+    client-id: ${GOSMS_CLIENT_ID:}
+    client-secret: ${GOSMS_CLIENT_SECRET:}
+    channel: ${GOSMS_CHANNEL:0}
+    base-url: ${GOSMS_BASE_URL:https://app.gosms.eu}
   twilio:
     account-sid: ${TWILIO_ACCOUNT_SID:}
     auth-token: ${TWILIO_AUTH_TOKEN:}
