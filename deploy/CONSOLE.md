@@ -769,7 +769,7 @@ just an HTTP POST.
 | `SPRING_PROFILES_ACTIVE` | `pubsub` — turns on the push endpoint; the profile is deliberately thin because a push subscription is just an authenticated POST |
 | `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` (no trailing slash; it is also the token audience) |
 | `USER_ACCOUNT_AUTH` | `gcp-id-token` |
-| `SMS_PROVIDER` | `logging` until Twilio is wired; the fake sender logs what it would send |
+| `SMS_PROVIDER` | `logging` (fake, logs what it would send), `gosms` or `twilio` |
 | `IDEMPOTENCY_STORE` | **`postgres`** — the shared store, so a redelivery landing on a different instance cannot send a second SMS. `memory` works but is per-instance |
 
 `postgres` also needs `DATABASE_URL` (the same `socketFactory` URL user-account uses),
@@ -780,6 +780,45 @@ own history, so it will not collide with user-account's migrations.
 
 **Grants:** `roles/run.invoker` on **user-account** for `wildalert-notification` (the lookup), and
 `roles/run.invoker` on **notification** for `wildalert-pubsub-push` (the push).
+
+### Sending real SMS: GoSMS, not Twilio
+
+Twilio wants **$12/month to lease a number**, and its free alphanumeric sender needs ~3 weeks of
+pre-registration in Czechia and a paid account. [GoSMS](https://gosms.eu) is Czech, has **no monthly
+fee at all**, costs from ~0.26 Kč per message, registers individuals (several Czech gateways
+require an IČO), and credits 20 Kč for verifying your phone — enough to test the whole pipeline for
+nothing. `GoSmsSender` is the implementation; `TwilioSmsSender` stays in the codebase as a fallback.
+
+From the GoSMS admin panel take the **client id**, **client secret** and the numeric **channel id**
+(the channel decides the sender shown on the phone and the per-message price). Then:
+
+| Env | Value |
+|---|---|
+| `SMS_PROVIDER` | `gosms` |
+| `GOSMS_CHANNEL` | the numeric channel id |
+
+Secrets — **Reference a secret**, as env vars, with a **per-secret** accessor binding for
+`wildalert-notification`:
+
+| Secret | Env var |
+|---|---|
+| `wildalert-gosms-client-id` | `GOSMS_CLIENT_ID` |
+| `wildalert-gosms-client-secret` | `GOSMS_CLIENT_SECRET` |
+
+**Check the credentials before deploying.** GoSMS has a `/api/v1/messages/test` endpoint that
+validates a message — credentials, channel and recipient format — **without sending it or spending
+credit**:
+
+```bash
+TOKEN=$(curl -s -X POST https://app.gosms.eu/oauth/v2/token   -d client_id="$(gcloud secrets versions access latest --secret=wildalert-gosms-client-id)"   -d client_secret="$(gcloud secrets versions access latest --secret=wildalert-gosms-client-secret)"   -d grant_type=client_credentials | python -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -o /dev/null -w '%{http_code}
+' -X POST https://app.gosms.eu/api/v1/messages/test   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"message":"WildAlert test","recipients":["+420XXXXXXXXX"],"channel":N}'
+# 200 = everything is right. 401 = credentials; 4xx with a body = channel or number format.
+```
+
+A hunter's `phone` must be the real number in E.164 — the 10e test hunter carries a deliberately
+fake `+420100000000`, which the gateway will reject.
 
 ---
 
