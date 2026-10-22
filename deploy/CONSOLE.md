@@ -708,9 +708,12 @@ A non-null `matchedHunterId` is the real prize: it proves the ID token was minte
 so `run.invoker` is granted. Then confirm the two side effects:
 
 ```bash
-# The event reached Pub/Sub. This subscription exists so the topic can be read with no consumer:
-gcloud pubsub subscriptions pull image.received.inspect --limit 5 --auto-ack \
-  --format="value(message.data.decode(base64))"
+# The event reached Pub/Sub. NOTE: image.received.inspect was deleted on 2026-10-22, once
+# recognition consumed the topic for real -- a pull subscription on a live topic is a second
+# consumer that quietly retains every event. Recreate it if you need this check again:
+#   gcloud pubsub subscriptions create image.received.inspect --topic=image.received
+# Otherwise read recognition's own log, which prints the event it received:
+gcloud run services logs read recognition --region europe-west3 --limit 20
 # {"storageKey":"...","contentType":"image/jpeg","senderEmail":"camera@example.com","hunterId":"..."}
 
 # The bytes reached R2: Cloudflare dashboard → R2 → wildalert-images → the object with that key.
@@ -971,9 +974,11 @@ Email Routing retries a worker that throws — including on a 401 from a mismatc
 why step 3 above matters more than it looks. A bounce, by contrast, makes some senders (Outlook)
 retry hourly for hours.
 
-**Up to here the SMS still does not arrive**, and that is expected: `image.received` has no
-consumer until recognition is deployed (step 11 and `ROADMAP.md`'s remaining Phase 6 work). The
-`image.received.inspect` subscription is how you read the event in the meantime.
+**Following these steps in order, the SMS does not arrive until recognition and notification are
+deployed** (steps 10f, 10g and 11) — `image.received` has a publisher and no consumer before that.
+Read the event from recognition's log once it exists, or create a temporary pull subscription on
+the topic. **As of 2026-10-22 the full chain is live:** a photo emailed to a hunter's address
+produced `[FAKE SMS] … "WildAlert: wild boar detected (99% confidence)"` nine seconds later.
 
 ---
 

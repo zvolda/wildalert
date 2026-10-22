@@ -475,7 +475,7 @@ longer exist in the repo, but what each slice proved still holds._
     holds. Nothing has been pushed to it yet — that needs `roles/run.invoker` for
     `wildalert-pubsub-push` and the subscription from step 11.
 
-- **Slice 11 (done 2026-10-22, pending review): the whole pipeline runs in Google Cloud.**
+- **Slice 11 (done 2026-10-22, pending review): the whole pipeline runs in Google Cloud, end to end, on real email.**
   notification deployed (`notification-00001-nxt`, image `notification:6b29df5` — the one carrying
   the auth fix), both push subscriptions created, and every grant in place.
   - **notification's first revision proved four things at once:** `GcpIdTokenUserAccountAuth`
@@ -496,21 +496,34 @@ longer exist in the repo, but what each slice proved still holds._
     inference, no model load — the instance was still warm from the deploy) → `animal.recognized`
     → notification, `attempt=1`. **The first time DeepFaune has classified a real photo in the
     cloud.**
-  - **No SMS, for the known reason.** email-ingestion's lookup timed out against a scaled-to-zero
-    user-account (`Request cancelled`, 11:23:08), so the event carried `hunterId: null` and
-    notification correctly declined: *"No SMS for event …: photo came from an unknown sender"*.
-    **That cold-start bug has now cost the alert in two of two real-email tests** — it is the
-    default outcome after any idle period, not an edge case. It is the one thing between this
-    pipeline and a working product; see slice 1 for the three candidate fixes.
+  - **The first run produced no SMS, for the known reason.** email-ingestion's lookup timed out
+    against a scaled-to-zero user-account (`Request cancelled`, 11:23:08), so the event carried
+    `hunterId: null` and notification correctly declined: *"No SMS for event …: photo came from an
+    unknown sender"*.
+  - **The second run, with user-account warmed first, completed the product (11:34):**
+    stored + published 11:34:47 with **no lookup warning**, recognition `attempt=1` 11:34:48,
+    `species=wild boar confidence=1.00` published 11:34:55, notification `attempt=1` 11:34:56 →
+    **`[FAKE SMS] to=+420100000000 body="WildAlert: wild boar detected (99% confidence)"`**.
+    **Nine seconds from email to alert**, every hop on first attempt, no retries, nothing
+    dead-lettered.
+  - **Which pins the cold-start bug precisely:** same photo, same path, cold → no alert, warm →
+    alert in 9s. It cost the alert in **two of three** real-email tests and is the default outcome
+    after any idle period, not an edge case — a hunter emailing an idle system gets silence. It is
+    now the one thing between this pipeline and a working product; see slice 1 for the three
+    candidate fixes. Recommended: publish the recipient address on `ImageReceived` and resolve the
+    hunter in notification, where Pub/Sub's retries already absorb cold starts — it also removes a
+    synchronous dependency from the ingestion path.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
   publishes; a push subscription needs a URL to push *to*): the two authenticated **push**
   subscriptions, `roles/run.invoker` for `wildalert-pubsub-push` per consumer service, and the
   service agent's dead-letter grants (the subscription form offers those with one click).
-  Separately: `image.received.inspect` is a pull subscription on the **live** topic, so every event
-  accumulates there unacked for 7 days. Useful for 10e; delete it once the real push subscription
-  exists, or it quietly becomes a second consumer nobody remembers.
+  Separately: `image.received.inspect` was a pull subscription on the **live** topic, so every event
+  accumulated there unacked for 7 days — useful for 10e, but a second consumer nobody would
+  remember. **Deleted 2026-10-22**, once `image.received.recognition` was proven end to end. Each
+  live topic now has exactly one subscription; the two `*.dlt.inspect` pull subscriptions stay,
+  because a DLT with no subscription discards what it receives.
 - Then recognition and notification; notification also needs `roles/run.invoker` on user-account.
   **Notification has no service account yet** — the four that exist are user-account,
   email-ingestion, recognition and pubsub-push. Create `wildalert-notification` before deploying
