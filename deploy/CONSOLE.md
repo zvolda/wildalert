@@ -270,6 +270,26 @@ traceable to its code without you typing a tag. It has to happen there: Cloud Bu
 re-scan the value of a user substitution for built-ins, so a substitution field containing
 `...:$SHORT_SHA` fails with `could not parse reference`.
 
+**A third substitution, `_CONTEXT`, and only recognition needs it.** The Kotlin services build from
+the repo root because their Dockerfiles run `./gradlew` across the whole multi-module project.
+`services/recognition/Dockerfile` instead does `COPY requirements.txt .` and `COPY app ./app`,
+which only resolve when the context *is* the service directory — and the root `.dockerignore`
+excludes `services/recognition/`, so in a root context those files are not even sent. The build
+config defaults `_CONTEXT` to `.`, so the existing triggers need no change; recognition overrides
+it. The four triggers are otherwise identical — same file, same service account, same `^main$`:
+
+| Trigger | `_SERVICE` | `_IMAGE_BASE` (no tag) | `_CONTEXT` |
+|---|---|---|---|
+| `user-account-main` | `user-account` | `…/wildalert/user-account` | *omit* |
+| `email-ingestion-main` | `email-ingestion` | `…/wildalert/email-ingestion` | *omit* |
+| `notification-main` | `notification` | `…/wildalert/notification` | *omit* |
+| `recognition-main` | `recognition` | `…/wildalert/recognition` | `services/recognition` |
+
+Expect the recognition build to take **far longer than the others and to produce a much larger
+image**: it installs CPU PyTorch and PytorchWildlife, then runs the model constructors so the
+MegaDetector and DeepFaune weights are baked in rather than downloaded at cold start. The 30-minute
+timeout in `cloudbuild.yaml` exists for this build, not the Gradle ones.
+
 **Build without waiting for a push:** Triggers list → **⋮** → **Run trigger** → branch `main` →
 **Run**. Watch it under **Cloud Build → History**; the log streams there (`cloudbuild.yaml` sets
 `logging: CLOUD_LOGGING_ONLY`). A few minutes — the root `.dockerignore` excludes `.gradle/`, so
