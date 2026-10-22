@@ -11,3 +11,9 @@ compatibility_date = "2026-10-14"
 
 # No routes/triggers here: an Email Worker is invoked by an Email Routing rule, which is
 # configured in the dashboard (Email Routing -> Catch-all -> Send to a Worker), not here.
+#
+# With no routes, `wrangler deploy` otherwise falls back to publishing on workers.dev and fails
+# with "You need to register a workers.dev subdomain" -- after having already uploaded the script,
+# so the worker is live and the command still exits 1. This says "don't": there is no HTTP handler
+# here to reach over a URL anyway, only `email`.
+workers_dev = false

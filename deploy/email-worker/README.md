@@ -49,23 +49,37 @@ Keep `WEBHOOK_SECRET` identical in Secret Manager and in the worker.
 4. **Deploy email-ingestion first.** The worker needs its URL, and a 401 or a cold 503 from it is
    indistinguishable here from a Cloudflare problem. `deploy/CONSOLE.md` steps 10a-10e build it,
    deploy it and verify the whole webhook path with `curl` before any mail is involved.
-5. **Deploy the worker:**
+5. **Deploy the worker. Done 2026-10-20** — `wildalert-email-in`, version `3e7572c7`.
    ```bash
    cd deploy/email-worker
    npx wrangler deploy
-   npx wrangler secret put INGESTION_URL     # https://email-ingestion-....run.app, no trailing slash
-   npx wrangler secret put WEBHOOK_SECRET    # same value as the Cloud Run env/secret
+   # pipe the values in: no prompt, nothing pasted, and no trailing newline -- a stray
+   # newline in the secret would mean a 401 on every email. The value never reaches
+   # shell history either.
+   printf %s "https://email-ingestion-lznkorfm4q-ey.a.run.app" | npx wrangler secret put INGESTION_URL
+   printf %s "$(gcloud secrets versions access latest --secret=wildalert-webhook-secret)" | npx wrangler secret put WEBHOOK_SECRET
    ```
+   **`wrangler deploy` exits 1 on a worker with no routes** — *after* uploading the script, so the
+   worker is live and serving while the command reports failure. It is trying to publish to
+   workers.dev, which needs a subdomain. `workers_dev = false` in `wrangler.toml` prevents it;
+   there is no HTTP handler here to reach by URL anyway, only `email`.
 6. **Point the catch-all at it:** Email Routing → Catch-all address → Action **Send to a
    Worker** → `wildalert-email-in` → Save. This replaces the temporary forward-to-Gmail rule
-   from step 3.
+   from step 3. **Done 2026-10-20.** Do it in the dashboard: `wrangler email routing rules update
+   <domain> catch-all --action-type worker` is rejected by Wrangler's own validation ("Catch-all
+   rule only supports 'forward' or 'drop' action types") even though the dashboard and the REST API
+   both support it. Read the result back with
+   `npx wrangler email routing rules get <domain> catch-all`.
+   **Note there are no custom rules**, so every address on the zone now reaches the worker — add an
+   explicit `hello@` rule if human mail on the domain should keep working.
 7. **Custom addresses first** (optional): add `hello@wildalert.app` → your mailbox. Explicit
    rules take precedence over the catch-all.
 8. **Set `INBOUND_EMAIL_DOMAIN=wildalert.app`** on the user-account Cloud Run service and deploy a
-   new revision. Existing hunters need nothing — `InboundAddresses` stores only the token and reads
-   the domain from config, so their addresses move domain with the revision. Until then they carry
-   `…@in.wildalert.local`, which no mail can reach, so the webhook would answer 200 with
-   `matchedHunterId: null`.
+   new revision. **Done 2026-10-20** — revision `user-account-00002-w8n`. Existing hunters needed
+   nothing: `InboundAddresses` stores only the token and reads the domain from config, so the test
+   hunter moved from `pwjpd75ivta9@in.wildalert.local` to `pwjpd75ivta9@wildalert.app` with the
+   revision and the same token, as designed. Before this they carried `…@in.wildalert.local`,
+   which no mail can reach, so the webhook answered 200 with `matchedHunterId: null`.
 
 ## Verifying
 

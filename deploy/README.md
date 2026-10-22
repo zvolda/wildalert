@@ -41,12 +41,14 @@ gets entered.
 | Setting | Value |
 |---|---|
 | Cloud Run service | `email-ingestion`, europe-west3, **Allow unauthenticated**, ingress All, min/max 0/3, 1 vCPU / 1 GiB |
+| Service URL | `https://email-ingestion-lznkorfm4q-ey.a.run.app` — what `gcloud run services describe` reports, and the form to use for `INGESTION_URL` and any token audience. The project-number form `https://email-ingestion-789527844011.europe-west3.run.app` also answers on the same service (both verified 200); keep one form everywhere. Deployed 2026-10-19, revision `email-ingestion-00002-nf9`. |
 | Service account | `wildalert-email-ingestion@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/pubsub.publisher` **on topic** `image.received`, `roles/run.invoker` **on service** `user-account`, `roles/secretmanager.secretAccessor` **per secret** (the three below) |
 | Secrets | `wildalert-webhook-secret` → `WEBHOOK_SECRET`, `wildalert-r2-access-key` → `R2_ACCESS_KEY`, `wildalert-r2-secret-key` → `R2_SECRET_KEY` |
 | Env | `SPRING_PROFILES_ACTIVE=pubsub`, `USER_ACCOUNT_BASE_URL=https://user-account-lznkorfm4q-ey.a.run.app`, `USER_ACCOUNT_AUTH=gcp-id-token`, `STORAGE_PROVIDER=r2`, `R2_ENDPOINT`, `R2_BUCKET=wildalert-images` |
 | Image storage | Cloudflare R2 bucket `wildalert-images` (EU), scoped Object Read & Write API token |
 | Build trigger | `email-ingestion-main` — same `cloudbuild.yaml`, `_SERVICE=email-ingestion` |
+| Startup probe | **Cloud Run's default TCP check on 8080**, not the HTTP probe on `/actuator/health/readiness` — see the Git Bash path-mangling entry under *Troubleshooting*. Add the HTTP probe from the console when convenient; here it would only mean "Spring started", as this service has no database. |
 
 **It is public on purpose, and it is the only one.** Cloudflare Workers call in from outside Google
 Cloud, so there is no Google identity to grant `run.invoker` to; `WebhookAuthFilter`'s shared secret
@@ -199,6 +201,20 @@ startup probe failing is a symptom, not the cause:
 ```bash
 gcloud run services logs read user-account --region europe-west3 --limit 100
 ```
+
+**Git Bash rewrites any flag value that starts with `/` (Windows only).** MSYS path conversion turns
+`--startup-probe=httpGet.path=/actuator/health/readiness` into
+`httpGet.path=C:/Program Files/Git/actuator/health/readiness` before gcloud ever sees it. The deploy
+then fails after about two minutes with *"The user-provided container failed the configured startup
+probe checks"*, while the container's own log shows a perfectly healthy app and a 404 whose body is
+`{"path":"/"}`. Three things that do **not** fix it: quoting the value (conversion ignores quotes),
+`MSYS_NO_PATHCONV=1` (it breaks gcloud's own launcher, which needs the conversion to locate
+`gcloud.py`), and a leading `//` (it survives as `//actuator/...`, which 404s too). Worse, the
+mangled probe is persisted on the **service template**, so a re-deploy that merely omits the flag
+inherits it — clear it explicitly with `--startup-probe=""`, as there is no `--clear-startup-probe`.
+Set HTTP probes from the **console** Health checks form instead, or run the deploy from PowerShell,
+which does no conversion. This applies to every `gcloud` flag whose value begins with `/`, so the
+recognition and notification deploys hit it identically.
 
 **Flyway fails with a permission error on the `public` schema.** PostgreSQL 15 removed the default
 `CREATE` grant on `public`, so whether the `wildalert` user can create tables depends on it

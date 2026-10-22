@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-14. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-20. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -127,10 +127,19 @@ longer exist in the repo, but what each slice proved still holds._
     → 404. The 200 case also proved the resilience fix — user-account was *not* running, and the
     log shows one retry then "treating it as no match" instead of a 500. Against user-account
     with Postgres stopped/started: readiness 503↔200 while liveness stayed 200.
-  - **Still open (structural):** matching the hunter inside the synchronous webhook means a real
-    user-account outage silently costs alerts. The clean fix is to publish the recipient address
-    on the event and resolve the hunter in notification instead; `min-instances=1` on user-account
-    sidesteps the cold-start case in the meantime.
+  - **Still open (structural), and it fired for real on 2026-10-20.** Matching the hunter inside the
+    synchronous webhook means a real user-account outage silently costs alerts — but the trigger
+    turns out to be far more routine than an outage. The first email through Cloudflare hit a
+    **scaled-to-zero user-account** and both lookup attempts timed out:
+    `I/O error … "Request cancelled"; retrying once` at 12:37:53, gave up at 12:37:58. The read
+    timeout is 5s and a cold Spring Boot + Flyway + Cloud SQL start takes longer, so the retry
+    — fired 5s later, still during the same boot — was doomed too. The photo was stored and published
+    with `hunterId: null`, the webhook answered 200, and nothing in the response said why.
+    **So in production the first photo after any idle period loses its SMS.** Three ways out:
+    raise the read timeout to ~15s with a backing-off retry (cheap, keeps scale-to-zero);
+    `min-instances=1` on user-account (~$10/month, gives up scale-to-zero); or the clean fix —
+    publish the recipient address on the event and resolve the hunter in **notification**, where
+    Pub/Sub's own retries absorb a cold start. Phase 7 decision.
 
 - **Slice 2 (infrastructure provisioned, service not yet deployed):** **Cloud SQL** (an explicit
   learning target) in **europe-west3**, all of it created **by hand in the Cloud Console** rather
@@ -280,28 +289,95 @@ longer exist in the repo, but what each slice proved still holds._
     the degrade path) — 9 in `HunterLookupClientTest`, `./gradlew build` green.
   - **Not verified in the cloud yet** — it cannot be until email-ingestion is deployed. The proof
     will be a non-null `matchedHunterId` from `CONSOLE.md` step 10e.
+- **Slice 6 (provisioning done 2026-10-16, deploy blocked): everything email-ingestion needs except
+  the deploy itself.** Each step verified read-only with `gcloud` rather than trusted to the form.
+  - **Pub/Sub IAM finished.** `wildalert-email-ingestion` holds `roles/pubsub.publisher` on
+    `image.received`, `wildalert-recognition` the same on `animal.recognized`, and the
+    Google-managed Pub/Sub service agent holds `iam.serviceAccountTokenCreator` **on the
+    `wildalert-pubsub-push` account as a resource**, not on the project. That last grant is what
+    lets Pub/Sub mint the OIDC token it pushes with; without it every push 403s with nothing
+    visibly wrong in the subscription config. All four accounts have **no user-managed keys**, and
+    none of them holds a project-level role.
+  - **R2.** Bucket `wildalert-images`, *Eastern Europe (EEUR)* **location hint** and no
+    jurisdiction — so the endpoint is the plain `https://<account-id>.r2.cloudflarestorage.com`.
+    (An EU *jurisdiction* bucket is a different setting with a `.eu.` host; the two look identical
+    in the form and the mismatch surfaces as an opaque S3 error.) Token scoped **Object Read &
+    Write on that one bucket**. `R2ImageStore` needs the S3 *Access Key ID / Secret Access Key*
+    pair — not the "Token value" the same page shows, which is for Cloudflare's own REST API.
+  - **Three secrets, one binding each.** `wildalert-webhook-secret` (44 bytes = base64 of 32
+    random bytes), `wildalert-r2-access-key` (32), `wildalert-r2-secret-key` (64) — all three with
+    **no trailing newline**, checked by byte count without ever printing a value. Each carries a
+    single `secretmanager.secretAccessor` for `wildalert-email-ingestion`, so it provably cannot
+    read `wildalert-db-password`. (user-account's own accessor role is still *project-wide*, which
+    is now a Phase 7 item in `ROADMAP.md`.)
+  - **Image built.** Trigger `email-ingestion-main` — the twin of `user-account-main` with only
+    `_SERVICE`/`_IMAGE_BASE` swapped — produced `email-ingestion:71d9c34`
+    (`sha256:126549591fb1c3ea…`) in 1m55s. `71d9c34` is the PR #4 merge commit, so
+    `UserAccountAuth` is in the image. Worth remembering: `gcloud builds log --stream` prints
+    nothing for these builds, because `cloudbuild.yaml` sets `logging: CLOUD_LOGGING_ONLY` and that
+    flag reads only Cloud Storage logs — use `gcloud beta builds log --stream`, or `builds
+    describe` for the verdict.
+  - **Deploy itself was refused by this session's permission classifier** ("Production Deploy" /
+    "Permission Grant"), *before* executing — twice, on two different days, so the deploy was run by
+    the user from the Claude Code prompt with `!` instead, with the output landing in the session so
+    it could still be verified here. See slice 7.
 
-## Remaining Phase 6 work
-- **Pub/Sub provisioning is part-done** (verified 2026-10-14 with `gcloud pubsub topics/subscriptions
-  list`): the four topics exist (`image.received`, `animal.recognized`, + `.dlt` for each), as do
-  three pull subscriptions — `image.received.inspect` (how the event can be read with no consumer
-  deployed) and the two `.dlt.inspect` ones (**a topic with no subscription discards messages**).
-  Still missing, because they need the consumers' URLs: the two authenticated **push**
-  subscriptions, `wildalert-pubsub-push` with `roles/run.invoker` per service, `wildalert-recognition`
-  with `roles/pubsub.publisher` on `animal.recognized`, and the Pub/Sub service agent's
-  `iam.serviceAccountTokenCreator` + dead-letter grants. `wildalert-email-ingestion` exists but
-  **holds no roles yet** — it needs publisher on `image.received`, invoker on user-account and
-  accessor on its three secrets.
-- **Deploy email-ingestion next** — it is the blocker for the domain, because the Email Worker needs
-  its URL as a secret. `deploy/CONSOLE.md` steps 10a-10e are the click-by-click: R2 bucket, three
-  secrets, a second build trigger, the deploy form (**Allow unauthenticated** — the only service
-  deployed that way), the two grants, and a `curl` verification that ends in a non-null
-  `matchedHunterId`.
-- Then recognition and notification; notification also needs `roles/run.invoker` on user-account.
-- Domain + Cloudflare Email Routing. **Worker written (2026-10-14): `deploy/email-worker/`** —
+- **Slice 7 (done 2026-10-19, pending review): email-ingestion is live in Google Cloud.**
+  `https://email-ingestion-lznkorfm4q-ey.a.run.app`, revision `email-ingestion-00002-nf9`,
+  image `email-ingestion:71d9c34`, **public** (`allUsers` → `roles/run.invoker`, the only such
+  service), ingress All, min/max 0/3, 1 vCPU / 1 GiB, `wildalert-email-ingestion` service account.
+  All six env vars and all three secret references were read back off the service template rather
+  than trusted to the command line. **It answers on two URLs:** the `-ey` form above, which is what
+  `describe` reports, and a project-number form
+  (`https://email-ingestion-789527844011.europe-west3.run.app`) — both verified 200 against the same
+  revision. The deploy output printed the project-number one, which is how it first got written down
+  here. Harmless for this service because nothing mints tokens *for* it, but pick one form and keep
+  it everywhere: an ID token's audience must match the URL string exactly.
+  - **The deploy failed first, and the cause is worth keeping.** Git Bash's MSYS path conversion
+    rewrote `--startup-probe=httpGet.path=/actuator/health/readiness` into
+    `httpGet.path=C:/Program Files/Git/actuator/health/readiness` *before gcloud saw it*, so the
+    probe hit `/`, got 404 twelve times, and the revision was failed after two minutes — while the
+    container log showed a completely healthy app (`Started … in 9.55 seconds`, R2 initialised, the
+    right ID-token audience, project resolved from the metadata server). The symptom accuses the
+    container; the fault was in the shell. `MSYS_NO_PATHCONV=1` is **not** the fix — it breaks
+    gcloud's own launcher, which needs the conversion to find `gcloud.py`. Quoting does nothing, and
+    `//actuator/…` survives unconverted, which is no better. Worst of it: the mangled probe persists
+    on the **service template**, so re-deploying without the flag inherits it. Cleared with
+    `--startup-probe=""` (there is no `--clear-startup-probe`), which is also what made the second
+    attempt a one-liner — everything else on the template was already right. Written up under
+    *Troubleshooting* in `deploy/README.md`; recognition and notification use the same flag.
+  - **Currently running Cloud Run's default TCP startup check**, not the HTTP probe. For this
+    service that costs little — with no database, readiness only ever meant "Spring started". Put
+    the HTTP probe back via the console's Health checks form, where no shell can mangle it.
+  - **Verified against the live service:** `POST /api/emails` with no header → **401**, with a wrong
+    secret → **401**; `/actuator/health` → `{"status":"UP","groups":["liveness","readiness"]}` and
+    both probes → UP; `env`, `metrics`, `heapdump`, `beans` → **404** each, so a public URL leaks no
+    config.
+  - **Step 10e passed in full, including the one that matters.** A posted email returned
+    **`matchedHunterId: a87cf72a-…`** — the proof that slice 5's ID token is minted from the
+    metadata server *and* accepted by Cloud Run. Both side effects confirmed: the two
+    `ImageReceived` events were pulled off `image.received.inspect` (correct `storageKey`,
+    `senderEmail`, `hunterId`), and both objects are in R2 at exactly those keys, 8 bytes each,
+    listed over the S3 API with the scoped token — so bucket, endpoint host and key pair are all
+    right.
+  - **The first attempt 403'd, and that was worth seeing.** Posted ~60s after the `run.invoker`
+    grant, the lookup got a **403 from Cloud Run's own front door** (Google's HTML error page, not
+    Spring's JSON) and the response was still a cheerful
+    `200 {"matchedRecipient":null,"matchedHunterId":null}` with the photo stored — exactly the
+    silent symptom `deploy/README.md` warns about, observed for real. Slice 1's degradation behaved
+    as designed: one retry, then "treating it as no match, so the photo is still stored and
+    published without a hunter". Identical request a minute later matched. **So the grant is
+    correct and IAM propagation is the lag** — worth remembering before debugging a 403 that is
+    only a minute old.
+  - **Test data left behind, deliberately:** hunter `a87cf72a-3612-4263-bc4f-a789152157ec`
+    (`e2e-test@wildalert.app`, inbound `pwjpd75ivta9@in.wildalert.local`, fake phone) and two 8-byte
+    objects under `inbound/2026/10/19/` in R2. The hunter is the easiest way to re-run 10e; delete
+    both when Phase 6 closes.
+
+- **Slice 8 (done 2026-10-20, pending review): real inbound email works.**
+  Worker written 2026-10-14 in `deploy/email-worker/` —
   `src/worker.js` POSTs the raw RFC-822 bytes to `/api/emails?envelopeTo=<message.to>` with the
-  `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README. Untested until
-  email-ingestion has a URL.
+  `X-Webhook-Secret` header, plus `wrangler.toml` and a setup/verification README.
   **`wildalert.app` is registered (2026-10-14, Cloudflare Registrar)** and the zone is served by
   Cloudflare's nameservers (`agustin`/`leia.ns.cloudflare.com`).
   **Email Routing is enabled and receiving mail (2026-10-14).** Verified from two resolvers
@@ -311,11 +387,26 @@ longer exist in the repo, but what each slice proved still holds._
   `animalrecognition@gmail.com`** (the verified destination address) and a real test email
   arrived there — so DNS, MX, SPF and the catch-all rule are all proven before our own service
   is involved. No DMARC record, which is fine while we only receive.
-  Still to do (all three need email-ingestion's URL first): deploy the worker, switch the catch-all
-  from *Send to an email* to **Send to a Worker** (`wildalert-email-in`), and set
-  `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. Existing hunters need **no new tokens** —
-  `InboundAddresses` stores only the token and reads the domain from config, so their addresses
-  move with the revision (an earlier note here said otherwise).
+  **Live on 2026-10-20.** Worker deployed (`wildalert-email-in`, version `3e7572c7`) with two
+  secrets — `INGESTION_URL` = `https://email-ingestion-lznkorfm4q-ey.a.run.app` and
+  `WEBHOOK_SECRET` piped straight from Secret Manager so the value was never pasted or printed.
+  Catch-all switched from *forward → Gmail* to **worker → `wildalert-email-in`**, and
+  `INBOUND_EMAIL_DOMAIN=wildalert.app` set on user-account (revision `user-account-00002-w8n`), which
+  moved the test hunter to `pwjpd75ivta9@wildalert.app` with no new token, as designed.
+  - **Proven with two real emails from Gmail**, read off `wrangler tail` and the Cloud Run logs:
+    `nobody@wildalert.app` → worker `delivered 41682B … -> 200`, stored, `hunterId: null`; then
+    `pwjpd75ivta9@wildalert.app` → `delivered 41684B … -> 200`, **`hunterId:
+    a87cf72a-…`**. Both photos in R2 (25086 bytes each) and both events pulled off
+    `image.received.inspect`. Worker CPU time **1 ms** against the free plan's 10 ms budget, so
+    streaming the body rather than buffering it is doing its job.
+  - **Two Wrangler potholes.** `wrangler deploy` **uploads the script and then fails anyway** when
+    the worker has no routes — it falls back to publishing on workers.dev, which needs a subdomain
+    you may not have registered, so the command exits 1 while the worker is live and serving.
+    `workers_dev = false` in `wrangler.toml` fixes it (committed). And `wrangler email routing rules
+    update … --action-type worker` is refused by the CLI's own validation ("Catch-all rule only
+    supports 'forward' or 'drop'") even though the dashboard and the REST API both allow it; the
+    newer Wrangler that might fix it needs Node ≥22 and this machine has v20. The catch-all was
+    therefore switched by hand in the dashboard.
   - **Design change forced by Cloudflare:** the plan said a catch-all on `in.<domain>`.
     Catch-all rules are **apex-only**; a subdomain needs one literal rule per address, i.e. a
     Cloudflare API call during registration. Hunter addresses therefore live on the apex
@@ -327,6 +418,21 @@ longer exist in the repo, but what each slice proved still holds._
     internet, so it cannot use Require authentication / internal ingress like the Pub/Sub
     consumers; `WebhookAuthFilter`'s shared secret is its protection, which is why that filter was
     built in slice 1.
+
+## Remaining Phase 6 work
+- **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
+  publishes; a push subscription needs a URL to push *to*): the two authenticated **push**
+  subscriptions, `roles/run.invoker` for `wildalert-pubsub-push` per consumer service, and the
+  service agent's dead-letter grants (the subscription form offers those with one click).
+  Separately: `image.received.inspect` is a pull subscription on the **live** topic, so every event
+  accumulates there unacked for 7 days. Useful for 10e; delete it once the real push subscription
+  exists, or it quietly becomes a second consumer nobody remembers.
+- Then recognition and notification; notification also needs `roles/run.invoker` on user-account.
+  **Notification has no service account yet** — the four that exist are user-account,
+  email-ingestion, recognition and pubsub-push. Create `wildalert-notification` before deploying
+  it: without one it inherits the default compute service account, which still holds
+  `roles/editor`, so its user-account lookups would succeed *by accident* and slice 5's ID-token
+  path would never actually be exercised.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
