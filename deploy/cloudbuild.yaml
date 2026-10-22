@@ -1,9 +1,21 @@
-# Builds one service image from the repo root and pushes it to Artifact Registry.
+# Builds one service image and pushes it to Artifact Registry.
 # The build runs in the cloud, so no local Docker is needed (handy given Docker lives in WSL2).
 #
 # From a Cloud Build trigger (the normal path — see CONSOLE.md step 8), set two substitutions:
 #   _SERVICE    = user-account
 #   _IMAGE_BASE = europe-west3-docker.pkg.dev/wildalert-prod/wildalert/user-account
+#
+# The three Kotlin services build from the **repo root** because their Dockerfiles run ./gradlew
+# over the whole multi-module project. The Python one does not: `services/recognition/Dockerfile`
+# does `COPY requirements.txt .` and `COPY app ./app`, which only resolve when the context is the
+# service directory — and the root `.dockerignore` excludes `services/recognition/` anyway, so
+# those files are not even in a root context. Hence _CONTEXT, which recognition overrides:
+#   _SERVICE    = recognition
+#   _IMAGE_BASE = europe-west3-docker.pkg.dev/wildalert-prod/wildalert/recognition
+#   _CONTEXT    = services/recognition
+# `--file` stays relative to the repo root (Docker allows a Dockerfile outside the context), and
+# `services/recognition/.dockerignore` keeps that context under a megabyte by dropping `.venv/`,
+# `tests/` and any weights — the model is downloaded during the build, not sent to it.
 #
 # The tag comes from $SHORT_SHA, the commit being built, so every image is traceable to its code
 # with nothing to maintain. Note that $SHORT_SHA is only expanded *here*, in the build config —
@@ -14,15 +26,15 @@
 #   gcloud builds submit --config deploy/cloudbuild.yaml --substitutions=\
 #   _SERVICE=user-account,_IMAGE_BASE=<repo path>,SHORT_SHA=$(git rev-parse --short HEAD) .
 #
-# Each service's Dockerfile expects the repo root as its build context (it runs ./gradlew), which
-# is why the Dockerfile is passed with --file rather than being found automatically.
+# The Dockerfile is passed with --file rather than being found automatically, because it does not
+# sit at the root of its build context in either case.
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - --file=services/${_SERVICE}/Dockerfile
       - --tag=${_IMAGE_BASE}:$SHORT_SHA
-      - .
+      - ${_CONTEXT}
 
 images:
   - ${_IMAGE_BASE}:$SHORT_SHA
@@ -32,5 +44,9 @@ options:
   # downloads Gradle and the dependencies fresh. A bigger machine keeps that to a few minutes.
   machineType: E2_HIGHCPU_8
   logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  # Default: the repo root, which is what the Kotlin services need. Recognition overrides it.
+  _CONTEXT: '.'
 
 timeout: 1800s
