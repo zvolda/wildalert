@@ -783,11 +783,12 @@ own history, so it will not collide with user-account's migrations.
 ## Step 10g — Deploy recognition to Cloud Run
 
 The expensive one, and the only service where "scales to zero" and "responds promptly" genuinely
-conflict. **The model is loaded lazily on first use** (`app/classifier.py`, `@lru_cache` around
-`_load_deepfaune`, with the import inside the function), so the container starts in seconds and the
-startup probe passes immediately — but **the first real message pays the weight load inside its own
-request**, on top of a multi-GB image pull. That is what the long timeouts are for; it is not
-slack.
+conflict. **The model is loaded at startup, not on first request:** `app/main.py`'s `lifespan` hook
+calls `get_classifier()` before the app accepts traffic, deliberately, so that a pushed message
+never waits on the weights and risks its acknowledgement deadline. Its docstring puts the load at
+about a minute. Uvicorn therefore does not listen until the model is in memory — which makes the
+**startup probe** the real gate, and means a scale-from-zero costs a multi-GB image pull plus that
+load before anything is served.
 
 **Navigation:** Cloud Run → **Deploy container** → **Service**
 
@@ -797,13 +798,13 @@ slack.
 | Service name | `recognition`, region `europe-west3` | |
 | Authentication | **Require authentication** | Pub/Sub pushes with an OIDC token |
 | Ingress | **All** at first | same-project push *should* satisfy internal ingress; don't debug ingress and IAM at once |
-| Memory | **4 GiB** | torch + MegaDetector + DeepFaune; 1 GiB cannot load them |
+| Memory | **8 GiB** | measured, not guessed: at 4 GiB the first revision died mid-load with `Memory limit of 4096 MiB exceeded with 4236 MiB used`. Requires ≥2 vCPU |
 | CPU | **2** | |
 | Concurrency | **1** | inference is CPU-bound — parallel requests on one instance only make each slower |
 | Request timeout | **600s** | must exceed cold start + model load + inference, and match the ack deadline |
 | Auto-scaling | min **0**, max **3** | min 1 on a 4 GiB instance is real monthly money; max 3 caps spend |
 | Startup CPU boost | **on** | shortens the load |
-| Startup probe | leave the **default TCP check** | uvicorn binds before the model exists, so an HTTP probe proves nothing extra — and from Git Bash the probe path gets mangled (see `README.md` troubleshooting) |
+| Startup probe | leave the **default TCP check** | the port opens only after `lifespan` has loaded the model, so TCP already means "ready"; the default allows 240s, comfortably over the ~1 minute load. An HTTP probe adds nothing and its path gets mangled from Git Bash (see `README.md` troubleshooting) |
 | Service account | `wildalert-recognition@…` | already holds `pubsub.publisher` on `animal.recognized` |
 
 | Env | Value |

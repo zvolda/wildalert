@@ -450,11 +450,58 @@ longer exist in the repo, but what each slice proved still holds._
   - **Tests:** 3 new in `HunterClientTest` (no header by default, the header when configured, and
     an unmintable token thrown rather than swallowed); `:services:notification:build` green, 34
     tests, 0 failures.
-  - **Deploy forms written** for both services as `CONSOLE.md` steps 10f and 10g, including the
-    thing that drives recognition's settings: **the model loads lazily on first use**
-    (`@lru_cache` on `_load_deepfaune`, import inside the function), so the container starts in
-    seconds and the startup probe passes immediately, but the first real message pays the weight
-    load *inside its own request*. That is why the ack deadline and request timeout are both 600s.
+  - **Deploy forms written** for both services as `CONSOLE.md` steps 10f and 10g. One claim in the
+    first draft was wrong and the first deploy disproved it: the model is **not** loaded lazily on
+    first request. `app/main.py`'s `lifespan` hook calls `get_classifier()` before the app accepts
+    traffic (the `@lru_cache` in `classifier.py` is what makes that stick), so uvicorn does not
+    listen until the weights are in and the **startup probe** is the gate, not the ack deadline.
+
+- **Slice 10 (done 2026-10-22, pending review): recognition is live in Google Cloud.**
+  `https://recognition-789527844011.europe-west3.run.app`, revision `recognition-00002-scn`, image
+  `recognition:0340fa0`, private (Require authentication), ingress All, min/max 0/3, 2 vCPU,
+  **8 GiB**, concurrency 1, request timeout 600s, startup CPU boost on, `wildalert-recognition`
+  service account, R2 keys from Secret Manager.
+  - **4 GiB is not enough, and the failure named the number:** the first revision died mid-load with
+    `Memory limit of 4096 MiB exceeded with 4236 MiB used`. That figure is where it was killed, not
+    its peak, so 8 GiB is headroom rather than a measurement. Everything else about that attempt was
+    fine — torch 2.14.1+cpu, `YOLOv9c summary (fused): 156 layers, 25,321,561 parameters` — which
+    confirmed the baked-in weights load with no network fetch.
+  - **The model loads during startup, not on first request.** `app/main.py`'s `lifespan` calls
+    `get_classifier()` before the app serves traffic, so uvicorn opens the port only once the
+    weights are in: **61.5 seconds** here (11:10:00 → 11:11:02), against the default TCP startup
+    probe's 240s. The ack deadline therefore covers queueing and inference, not the weight load —
+    the opposite of what this file said a few hours earlier.
+  - **Verified:** `/health` → 200 with an ID token, **403 without** one, so the private boundary
+    holds. Nothing has been pushed to it yet — that needs `roles/run.invoker` for
+    `wildalert-pubsub-push` and the subscription from step 11.
+
+- **Slice 11 (done 2026-10-22, pending review): the whole pipeline runs in Google Cloud.**
+  notification deployed (`notification-00001-nxt`, image `notification:6b29df5` — the one carrying
+  the auth fix), both push subscriptions created, and every grant in place.
+  - **notification's first revision proved four things at once:** `GcpIdTokenUserAccountAuth`
+    initialised with the right audience (the morning's code, running), Flyway reached **Cloud SQL
+    through the socket factory** (`PostgreSQL 18.6`), it created the `notification` schema and
+    applied `V1 create processed event table` — so the shared idempotency store is live — and it
+    started in 12.7s. Verified: health + both probes UP with an ID token, **403 without**,
+    `/actuator/env` → 404. Flyway warns that PG18 is newer than it supports; the migration applied
+    cleanly, and it is the same PG18-prod/PG17-local gap already recorded above.
+  - **Subscriptions:** `image.received.recognition` → recognition `/events/image-received`, ack
+    deadline **600s**; `animal.recognized.notification` → notification
+    `/api/events/animal-recognized`, ack deadline **60s**. Both authenticate with an OIDC token from
+    `wildalert-pubsub-push` and dead-letter after 5 attempts. The DLT topics carry no explicit
+    grants: the Pub/Sub service agent already holds `roles/pubsub.serviceAgent` project-wide, which
+    covers publish — to be proven by actually dead-lettering something rather than assumed.
+  - **End-to-end on a real emailed photo (11:23):** worker → ingestion → R2 → `image.received` →
+    recognition, which classified it **`species=wild boar confidence=1.00 low=False`** (6.4s
+    inference, no model load — the instance was still warm from the deploy) → `animal.recognized`
+    → notification, `attempt=1`. **The first time DeepFaune has classified a real photo in the
+    cloud.**
+  - **No SMS, for the known reason.** email-ingestion's lookup timed out against a scaled-to-zero
+    user-account (`Request cancelled`, 11:23:08), so the event carried `hunterId: null` and
+    notification correctly declined: *"No SMS for event …: photo came from an unknown sender"*.
+    **That cold-start bug has now cost the alert in two of two real-email tests** — it is the
+    default outcome after any idle period, not an edge case. It is the one thing between this
+    pipeline and a working product; see slice 1 for the three candidate fixes.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
