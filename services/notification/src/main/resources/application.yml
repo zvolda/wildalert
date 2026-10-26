@@ -6,13 +6,18 @@ spring:
   config:
     import: optional:file:.env[.properties]
 
-  # Outbound HTTP (the RestClient used to look up a hunter's phone number). More generous than
-  # email-ingestion's on purpose: a timeout here throws, so the push returns 5xx and Pub/Sub
-  # redelivers — waiting out a cold-starting user-account is cheaper than burning a delivery attempt.
+  # Outbound HTTP (the RestClient used to look up a hunter's phone number). Generous on purpose:
+  # a timeout here throws, so the push returns 5xx and Pub/Sub redelivers — waiting out a
+  # cold-starting user-account is cheaper than burning a delivery attempt.
+  #
+  # 25s, not 10s, because at 10s the first alert after any idle period *always* failed: a cold
+  # Spring Boot + Flyway + Cloud SQL start takes longer than 10s, so attempt=1 died on a read
+  # timeout and the SMS arrived ~24s late on attempt=2 (measured twice, 2026-10-26). 25s stays
+  # well inside the 60s ack deadline, and the redelivery remains the net if it is still not enough.
   http:
     client:
       connect-timeout: 2s
-      read-timeout: 10s
+      read-timeout: 25s
 
   # Only used when idempotency.store=postgres (see PostgresIdempotencyConfig).
   datasource:
