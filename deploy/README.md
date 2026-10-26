@@ -244,11 +244,27 @@ gcloud secrets versions access latest --secret wildalert-db-password | od -c | t
 Either wait, or create it as `wildalert-db2` — then update the connection name here, in `CONSOLE.md`
 and in the Cloud Run `DATABASE_URL`.
 
-## Teardown — stop paying when you stop working
+## Teardown — stop, don't delete
 
-**SQL → `wildalert-db` → Delete** (you have to type the instance name). That is the only resource
-with a meaningful idle cost. Nothing is lost that the console steps plus Flyway cannot recreate —
-only test data.
+`wildalert-db` is the only resource with a meaningful idle cost (~$9/month; everything else scales
+to zero). **It is deliberately left running** — and if you ever do want to pause it, **stop it
+rather than delete it**:
+
+```bash
+gcloud sql instances patch wildalert-db --activation-policy=NEVER   # ~$0.90/month, data kept
+gcloud sql instances patch wildalert-db --activation-policy=ALWAYS  # back again
+```
+
+**Deleting is unrecoverable here.** Backups and point-in-time recovery are off by design (see
+below), so there is nothing to restore from: you lose the hunter rows with their inbound tokens —
+re-registering mints new addresses — and notification's idempotency table. "Only test data" was
+true when this was written; it stopped being true once a real hunter row drove a real SMS.
+
+The product is **offline** while the database is down: notification's lookup fails, Pub/Sub retries
+five times and the alert lands in `animal.recognized.dlt`. Fine between work sessions, not fine
+with a camera in a field.
+
+If you genuinely want it gone, these toggles must be off first, or billing outlives the instance:
 
 Three toggles can quietly keep billing you after the instance is gone, so confirm they are off
 before deleting (**Edit → Data Protection**):

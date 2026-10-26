@@ -184,7 +184,14 @@ longer exist in the repo, but what each slice proved still holds._
     Left alone deliberately so the first build works; stripping it with explicit build roles is a
     Phase 7 task in `ROADMAP.md`.
   - **Cost:** $0.01/hour ≈ **$9/month** for the instance, billed while it exists whether queried or
-    not. Delete it between work sessions — Cloud Run at min-instances 0 is free idle.
+    not. **Decision (2026-10-26): leave it running.** ~$9/month buys not having to think about it,
+    and since the pipeline now holds real state — the hunter row, its inbound token, notification's
+    idempotency table — and **backups are deliberately off**, a delete is unrecoverable. If it ever
+    is worth pausing, **stop it, never delete it**:
+    `gcloud sql instances patch wildalert-db --activation-policy=NEVER` keeps the data and costs
+    only the 10 GB of HDD (~$0.90/month); `ALWAYS` brings it back. Note the product is **offline**
+    while it is stopped: notification's lookup fails and an alert dead-letters after five retries.
+    Cloud Run at min-instances 0 is free idle regardless.
 
 - **Slice 3 (done, 2026-10-08): user-account is live in Google Cloud.** Image built by a **Cloud
   Build trigger** on `main` (GitHub App connection, `deploy/cloudbuild.yaml`, tag from `$SHORT_SHA`)
@@ -578,9 +585,21 @@ longer exist in the repo, but what each slice proved still holds._
     slice 5 therefore survives only in notification, which is where it was always needed: that
     service really does call a private user-account. Tests: 26 in email-ingestion (was 35; the nine
     deleted ones covered the deleted client).
-    **Still to do in the cloud:** clear `USER_ACCOUNT_BASE_URL` / `USER_ACCOUNT_AUTH` from the
-    email-ingestion revision and revoke its `roles/run.invoker` on user-account — it has no use for
-    either now.
+    **Cloud side done too (2026-10-26):** email-ingestion `00004-lb7` carries only
+    `SPRING_PROFILES_ACTIVE`, `STORAGE_PROVIDER` and `INBOUND_EMAIL_DOMAIN` (the startup log no
+    longer constructs an ID-token bean at all), and its `roles/run.invoker` on user-account is
+    **revoked** — that policy now lists `wildalert-notification` alone. This mattered more than
+    tidiness: email-ingestion is the one public, internet-facing service, so until the revoke, a
+    compromise of that webhook inherited an identity that could query the private phone-number
+    service directly. Proven afterwards with a photo: **no 403 anywhere**, SMS delivered
+    (11:30:02 → 11:32:06).
+  - **The cold-start retry reproduces exactly, which makes it tunable.** Both post-fix runs failed
+    `attempt=1` on a `Read timed out` and succeeded on `attempt=2` about 24s later. It is not bad
+    luck: notification's read timeout is **10s** and a cold user-account takes longer, so the first
+    alert after idle always pays a wasted attempt. Raising that timeout to ~25s would likely let
+    the first attempt through — safe here, because the ack deadline is 60s and the retry stays as
+    the net. Note this is the *opposite* call to email-ingestion's, where a longer timeout was the
+    wrong fix because failure there lost the photo rather than delaying it.
   - **Tests:** 104 Kotlin (24 user-account, 35 email-ingestion, 45 notification) + 34 Python, all
     green. The cross-language contract test now carries a payload **generated from `events.py`
     itself** rather than hand-written.
