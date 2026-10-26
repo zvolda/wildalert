@@ -55,7 +55,11 @@ Cloud, so there is no Google identity to grant `run.invoker` to; `WebhookAuthFil
 is the protection. **It authenticates *outwards* with an ID token** (`UserAccountAuth`,
 `USER_ACCOUNT_AUTH=gcp-id-token`), because user-account requires authentication — without the
 matching `run.invoker` grant every lookup 403s and, by design, degrades to "no hunter matched"
-rather than failing the webhook. So the symptom is silent: `matchedHunterId: null` with a 200.
+rather than failing the webhook. So the symptom was silent: a 200 with no hunter and no alert.
+**Fixed by moving the lookup:** the recipient address now travels on `ImageReceived` and
+notification resolves it, where a failure throws and Pub/Sub redelivers. email-ingestion makes no
+calls to user-account at all, and needs `INBOUND_EMAIL_DOMAIN` set to pick our own address out of
+an email's recipients.
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
 

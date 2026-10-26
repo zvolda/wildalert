@@ -45,4 +45,21 @@ class HunterClient(
             log.debug("No hunter with id {}", id)
             null
         }
+
+    /**
+     * Resolves the address an alert was addressed to. A 404 means the address is not a hunter's —
+     * mail to a made-up name on our domain, which email-ingestion deliberately does not filter —
+     * and maps to null. Everything else is thrown, so the event is redelivered rather than dropped.
+     */
+    fun findByInboundAddress(address: String): HunterContact? =
+        try {
+            restClient.get()
+                .uri { builder -> builder.path("/api/hunters/by-inbound-address").queryParam("address", address).build() }
+                .headers { headers -> auth?.authorize(headers) }
+                .retrieve()
+                .body(HunterContact::class.java)
+        } catch (ex: HttpClientErrorException.NotFound) {
+            log.debug("No hunter at inbound address {}", address)
+            null
+        }
 }

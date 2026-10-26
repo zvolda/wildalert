@@ -126,6 +126,24 @@ class GoSmsSenderTest {
     }
 
     @Test
+    fun `the id is taken from link, which is what a real send actually returns`() {
+        // Verbatim from the first real send (2026-10-26): no id field anywhere, the id is the last
+        // segment of "link". Without this the happy path logged a WARN on every single SMS.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/messages/"))
+            .andRespond(
+                withSuccess(
+                    """{"recipients":{"invalid":[],"optedOut":[]},"link":"/api/v1/messages/47102867094"}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertThat(GoSmsSender(builder, props).send(message).messageId).isEqualTo("47102867094")
+    }
+
+    @Test
     fun `an unrecognised response still counts as sent, because the gateway accepted it`() {
         // Failing here would redeliver an SMS the hunter has already received. The id is only
         // ever logged, so losing it is cheaper than sending twice.

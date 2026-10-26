@@ -23,6 +23,9 @@ def handle(
     result = apply_threshold(classifier.classify(image_bytes), threshold)
     return AnimalRecognized(
         source_event_id=event.event_id,
+        # Passed straight through: recognition has no interest in who the alert is for, it just
+        # must not lose the only thing that identifies them.
+        recipient=event.recipient,
         hunter_id=event.hunter_id,
         storage_key=event.storage_key,
         species=result.species,
