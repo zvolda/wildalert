@@ -19,7 +19,9 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 /**
  * Real EmailParser + fake LoggingImageStore + a recording EventPublisher. **Nothing is mocked any
  * more**: this service no longer calls user-account, so picking the hunter's address out of an
- * email is pure string work against `inbound.email-domain` (in.wildalert.local in test config).
+ * email is pure string work against `inbound.email-domain`. There is no test config: these
+ * tests run against the **real default** in `application.yml` (`wildalert.local`), which is why
+ * [InboundDomainContractTest] exists to pin that default to the one user-account mints on.
  */
 @WebMvcTest(EmailController::class)
 @Import(EmailParser::class, LoggingImageStore::class, EmailControllerTest.RecordingEventPublisher::class)
@@ -31,7 +33,7 @@ class EmailControllerTest {
     @Autowired
     lateinit var events: RecordingEventPublisher
 
-    private val inbound = "7f3k9qabcdef@in.wildalert.local"
+    private val inbound = "7f3k9qabcdef@wildalert.local"
     private val keyPattern = "inbound/[0-9]{4}/[0-9]{2}/[0-9]{2}/[0-9a-f-]+[.]png"
 
     @BeforeEach
@@ -116,18 +118,18 @@ class EmailControllerTest {
         // from a made-up one, because it does not look anything up. It forwards the address and
         // notification answers "not a hunter" with a 404. Spam to our domain therefore still costs
         // a storage write and a recognition run -- see ROADMAP for where to filter that if it bites.
-        val raw = TestEmails.withImageAttachment(from = "stranger@example.com", to = "nobody@in.wildalert.local")
+        val raw = TestEmails.withImageAttachment(from = "stranger@example.com", to = "nobody@wildalert.local")
 
         mockMvc.perform(postEmail(raw))
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.matchedRecipient").value("nobody@in.wildalert.local"))
+            .andExpect(jsonPath("$.matchedRecipient").value("nobody@wildalert.local"))
 
-        assertThat(events.published.single().recipient).isEqualTo("nobody@in.wildalert.local")
+        assertThat(events.published.single().recipient).isEqualTo("nobody@wildalert.local")
     }
 
     @Test
     fun `the domain match ignores case`() {
-        val shouty = "7F3K9QABCDEF@IN.WILDALERT.LOCAL"
+        val shouty = "7F3K9QABCDEF@WILDALERT.LOCAL"
         val raw = TestEmails.withImageAttachment(from = "noreply@camera-vendor.com", to = "hunter@gmail.com")
 
         mockMvc.perform(postEmail(raw).param("envelopeTo", shouty))

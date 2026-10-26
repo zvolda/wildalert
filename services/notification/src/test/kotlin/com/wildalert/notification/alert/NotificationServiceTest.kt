@@ -34,7 +34,7 @@ class NotificationServiceTest {
     private val service = NotificationService(hunterClient, smsSender, processedEvents)
 
     private val hunterId = UUID.randomUUID()
-    private val recipient = "7f3k9qabcdef@in.wildalert.local"
+    private val recipient = "7f3k9qabcdef@wildalert.local"
 
     @Test
     fun `texts the hunter's phone for a recognized animal`() {

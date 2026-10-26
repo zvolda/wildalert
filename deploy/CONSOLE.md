@@ -722,11 +722,16 @@ gcloud run services logs read recognition --region europe-west3 --limit 20
 # The bytes reached R2: Cloudflare dashboard → R2 → wildalert-images → the object with that key.
 ```
 
-If `matchedHunterId` is null, the Cloud Run logs for this revision say which of three things it is:
-`403 Forbidden` on the lookup means `run.invoker` is missing; `Could not mint an ID token` means the
-service account or `USER_ACCOUNT_AUTH` is wrong; a plain 404 means the address is not a hunter's —
-most likely because `INBOUND_EMAIL_DOMAIN` on user-account still says `in.wildalert.local`, which
-step 11b fixes.
+**This paragraph describes the pre-slice-13 ingestion path** and is kept for the deploy history:
+email-ingestion no longer looks a hunter up at all, so it has no `matchedHunterId`, no ID token and
+no `run.invoker` on user-account. The equivalent failure now shows as `matchedRecipient: null` in
+the webhook's response, and there is only one cause left: `INBOUND_EMAIL_DOMAIN` on email-ingestion
+is not the domain user-account mints on. Set the same value on both services — unset, email-ingestion
+falls back to `wildalert.local`, which is right for local dev and wrong in the cloud.
+
+_Historical:_ with the old path, `403 Forbidden` on the lookup meant `run.invoker` was missing,
+`Could not mint an ID token` meant the service account or `USER_ACCOUNT_AUTH` was wrong, and a plain
+404 meant the address was not a hunter's.
 
 ---
 

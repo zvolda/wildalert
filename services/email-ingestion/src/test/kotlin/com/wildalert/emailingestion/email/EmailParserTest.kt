@@ -31,10 +31,10 @@ class EmailParserTest {
         // are unchanged from the original, only the delivery headers name our inbound address.
         val raw = TestEmails.withImageAttachment(
             from = "noreply@camera-vendor.com",
-            to = "hunter@gmail.com, 7F3K9QABCDEF@in.wildalert.local",
+            to = "hunter@gmail.com, 7F3K9QABCDEF@wildalert.local",
             headers = mapOf(
-                "Delivered-To" to "7f3k9qabcdef@in.wildalert.local",
-                "X-Original-To" to "<other@in.wildalert.local>",
+                "Delivered-To" to "7f3k9qabcdef@wildalert.local",
+                "X-Original-To" to "<other@wildalert.local>",
                 "Cc" to "friend@example.com",
             ),
         )
@@ -42,8 +42,8 @@ class EmailParserTest {
         val result = parser.parse(raw)
 
         assertThat(result.recipients).containsExactly(
-            "7f3k9qabcdef@in.wildalert.local",
-            "other@in.wildalert.local",
+            "7f3k9qabcdef@wildalert.local",
+            "other@wildalert.local",
             "hunter@gmail.com",
             "friend@example.com",
         )

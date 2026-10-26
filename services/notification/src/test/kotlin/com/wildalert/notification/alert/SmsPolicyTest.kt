@@ -59,7 +59,7 @@ class SmsPolicyTest {
     ) = AnimalRecognized(
         eventId = UUID.randomUUID(),
         sourceEventId = UUID.randomUUID(),
-        recipient = "7f3k9qabcdef@in.wildalert.local",
+        recipient = "7f3k9qabcdef@wildalert.local",
         storageKey = "inbound/2026/09/15/a.jpg",
         species = species,
         confidence = confidence,
