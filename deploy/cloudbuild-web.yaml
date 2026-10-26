@@ -1,0 +1,54 @@
+# Verify the web app (install, type-check, unit tests, production build) in Cloud Build.
+#
+# Why this exists: on the Oracle corporate network the npm registry is unreachable (the web
+# gateway re-signs TLS and withholds the issuing intermediate, which Node cannot work around --
+# see AGENTS.md). Cloud Build has no such restriction, so this is where `npm install` can run.
+# It doubles as a repeatable check for any branch.
+#
+# Submit the web/ directory as the source, so the upload stays tiny and the steps need no `dir`:
+#
+#   gcloud builds submit web --config deploy/cloudbuild-web.yaml
+#
+# It builds nothing deployable and pushes no image -- the point is the exit code. A failure here
+# is a real failure: a type error, a failing test, or a dependency range that does not resolve.
+steps:
+  - name: node:22
+    id: verify
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "--- versions"
+        node --version
+        npm --version
+
+        # The npm bundled with node:22 (10.9.9) crashes resolving vitest's optional peer
+        # dependencies -- `Cannot read properties of null (reading 'edgesOut')`, thrown from
+        # arborist's own #loadPeerSet while it walks @vitest/*, jsdom, happy-dom and canvas.
+        # It is an npm bug, not a problem with package.json, so take a newer npm.
+        echo "--- upgrading npm"
+        npm install -g npm@latest >/dev/null 2>&1
+        npm --version
+
+        echo "--- install"
+        # `npm install` rather than `npm ci`, because package-lock.json is not committed yet
+        # (it cannot be generated on the machine this project is developed on). Once a lockfile
+        # lands, switch this to `npm ci` so the build is reproducible.
+        npm install --no-fund --no-audit
+        echo "--- resolved versions"
+        npm ls --depth=0 || true
+        echo "--- tests"
+        npm test
+        echo "--- type-check + build"
+        npm run build
+        echo "--- build output"
+        ls -la dist
+
+timeout: 900s
+
+options:
+  # The build service account has no log bucket, so logs must go to Cloud Logging only --
+  # same reason as in cloudbuild.yaml.
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8

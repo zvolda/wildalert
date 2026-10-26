@@ -59,6 +59,10 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
   - `npm run build` — `tsc --noEmit` then a real Vite build
   - It needs `user-account` on :8081; the browser calls same-origin `/api/*` and Vite's dev
     proxy forwards it, which is why there is no CORS config anywhere. See `web/README.md`.
+  - **`npm install` does not work on the Oracle network** (see the gotcha below). Verify in the
+    cloud instead: `gcloud builds submit web --config deploy/cloudbuild-web.yaml`, which installs,
+    tests and builds on a `node:22` worker and deploys nothing. Note that config has to upgrade
+    npm first — the npm bundled with `node:22` crashes on vitest's optional peer graph.
 - **Local infra:** `docker compose up -d` (Postgres + the Pub/Sub emulator, topics and
   subscriptions included). Docker Engine runs in WSL2 (no Docker Desktop). Because the emulator
   pushes over HTTP, run the services in that same WSL2 session and bind uvicorn to `0.0.0.0`.
