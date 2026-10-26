@@ -600,6 +600,39 @@ longer exist in the repo, but what each slice proved still holds._
     first, the redelivery would have been deduped into silence. And the GoSMS `link` id parsing
     worked on a real send (`id=47098239900`, not `unknown`).
 
+- **Slice 14 (done 2026-10-26, pending review): the inbound-domain mismatch slice 13 left behind,
+  and notification's read timeout.** Two config fixes, no behaviour change beyond them.
+  - **email-ingestion defaulted to a domain nothing mints.** Slice 13 made the recipient match a
+    configured domain instead of a lookup, and email-ingestion's default stayed
+    `in.wildalert.local` — a leftover from the subdomain design the Cloudflare apex catch-all
+    replaced — while user-account mints on `wildalert.local`. On top of that, `compose.yml` handed
+    `INBOUND_EMAIL_DOMAIN` to user-account only. So **the whole local pipeline was silently
+    broken**: no recipient was ever matched, every photo published with none, the webhook still
+    answered 200, and no SMS was ever sent. Prod was unaffected — both cloud revisions carry
+    `wildalert.app` explicitly — which is exactly why nothing noticed. Both defaults are now the
+    same string and compose passes the variable to both services.
+  - **Every existing test passed throughout, and that is the lesson.** The email-ingestion tests
+    take the domain from the same `application.yml` they are validating, so they agreed with a
+    value that agreed with nothing else. `InboundDomainContractTest` now reads the two services'
+    `application.yml` files and `compose.yml` off disk and asserts they use the same variable and
+    the same default — a contract test, not a unit test, because the bug lived *between* the files.
+    It caught one straggler immediately (an uppercase `IN.WILDALERT.LOCAL` fixture a case-sensitive
+    rename had missed).
+  - **notification's read timeout 10s → 25s**, the tunable slice 13 identified from two measured
+    runs: a cold Spring Boot + Flyway + Cloud SQL start takes longer than 10s, so `attempt=1` died
+    on a read timeout every time and the SMS arrived ~24s late on `attempt=2`. 25s stays well
+    inside the 60s ack deadline and the redelivery remains the net. **Opposite call to
+    email-ingestion's**, where a longer timeout was the wrong fix because failure there lost the
+    photo instead of delaying it — the asymmetry is the point.
+  - **Also removed:** `USER_ACCOUNT_BASE_URL` from email-ingestion's compose block, dead since
+    slice 13 deleted its last outbound HTTP call. The `in.wildalert.local` spelling is gone from
+    every service and test fixture; it survives only in `deploy/email-worker/README.md` as history.
+  - **Tests:** 97 Kotlin (24 user-account, 28 email-ingestion, 45 notification) + 34 Python, all
+    green, `contextLoads` included with Postgres up.
+  - **Not deployed, and it does not need to be:** both cloud revisions set the domain explicitly,
+    so the default never applied there. The read-timeout change does need a notification revision
+    to take effect — until then the first alert after idle still pays the wasted attempt.
+
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
   publishes; a push subscription needs a URL to push *to*): the two authenticated **push**
