@@ -1026,10 +1026,18 @@ produced `[FAKE SMS] … "WildAlert: wild boar detected (99% confidence)"` nine 
 
 ## Step 12 — Stop paying when you stop working
 
-**Navigation:** SQL → `wildalert-db` → **Delete**
+`wildalert-db` is the only resource with a meaningful idle cost (~$9/month). **It is deliberately
+left running** (decision 2026-10-26), and the right way to pause it is to **stop** it, not delete
+it — `Edit → Activation policy`, or:
 
-You have to type the instance name to confirm. This is the only resource with a meaningful idle
-cost. Nothing is lost that steps 5–6 plus Flyway cannot recreate — only test data.
+```bash
+gcloud sql instances patch wildalert-db --activation-policy=NEVER   # data kept, ~$0.90/month
+```
+
+**Deleting is unrecoverable**: backups and PITR are off by step 4, so the hunter rows and their
+inbound tokens are gone for good, and re-registering mints different addresses. Flyway recreates
+the *schema*, never the data. And the product is offline while the database is — an alert arriving
+then dead-letters after five retries.
 
 **First check the three Data Protection toggles from step 4 are still off** (Edit → Data
 Protection). *Prevent instance deletion* blocks the delete outright; *Retain backups after instance

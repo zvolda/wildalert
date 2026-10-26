@@ -183,7 +183,14 @@ longer exist in the repo, but what each slice proved still holds._
     Left alone deliberately so the first build works; stripping it with explicit build roles is a
     Phase 7 task in `ROADMAP.md`.
   - **Cost:** $0.01/hour ≈ **$9/month** for the instance, billed while it exists whether queried or
-    not. Delete it between work sessions — Cloud Run at min-instances 0 is free idle.
+    not. **Decision (2026-10-26): leave it running.** ~$9/month buys not having to think about it,
+    and since the pipeline now holds real state — the hunter row, its inbound token, notification's
+    idempotency table — and **backups are deliberately off**, a delete is unrecoverable. If it ever
+    is worth pausing, **stop it, never delete it**:
+    `gcloud sql instances patch wildalert-db --activation-policy=NEVER` keeps the data and costs
+    only the 10 GB of HDD (~$0.90/month); `ALWAYS` brings it back. Note the product is **offline**
+    while it is stopped: notification's lookup fails and an alert dead-letters after five retries.
+    Cloud Run at min-instances 0 is free idle regardless.
 
 - **Slice 3 (done, 2026-10-08): user-account is live in Google Cloud.** Image built by a **Cloud
   Build trigger** on `main` (GitHub App connection, `deploy/cloudbuild.yaml`, tag from `$SHORT_SHA`)
