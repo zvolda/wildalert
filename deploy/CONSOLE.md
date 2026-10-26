@@ -602,7 +602,7 @@ Phase 7 decision, deliberately not now.
 |---|---|
 | `SPRING_PROFILES_ACTIVE` | `pubsub` |
 | `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` |
-| `USER_ACCOUNT_AUTH` | `gcp-id-token` |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.app` — **required**: it is how this service picks our own address out of an email's recipients. Wrong or unset and every photo is published with no recipient, so nobody is ever texted. |
 | `STORAGE_PROVIDER` | `r2` (or `logging` if you skipped step 10a) |
 | `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `R2_BUCKET` | `wildalert-images` |
@@ -653,7 +653,8 @@ rather than after.
 A missing `run.invoker` reads like this in the logs: `Could not reach user-account to match … after
 2 attempts; treating it as no match`. The photo is still stored and the event still published — only
 that SMS is lost. The degradation is deliberate (see `HunterLookupClient`), but it does mean **a 403
-is invisible in the HTTP response**: the webhook answers 200 with `matchedHunterId: null`. Read the
+is invisible in the HTTP response** (and since the recipient change this grant is no longer needed
+here at all — email-ingestion makes no calls to user-account). Read the
 response body, not the status code.
 
 ---
@@ -704,8 +705,10 @@ curl -s -X POST "$URL/api/emails?envelopeTo=$ADDR" \
 # {"matchedRecipient":"<token>@...","matchedHunterId":"<uuid>","imageCount":1,...}
 ```
 
-A non-null `matchedHunterId` is the real prize: it proves the ID token was minted *and* accepted,
-so `run.invoker` is granted. Then confirm the two side effects:
+**As of the recipient change this response no longer carries `matchedHunterId`** — this service
+does not resolve hunters any more, so `matchedRecipient` is the thing to check: it proves the
+inbound domain is configured and the address was recognised as ours. Whether that address belongs
+to a hunter is now proven further down the pipeline, by notification actually sending the SMS. Then confirm the two side effects:
 
 ```bash
 # The event reached Pub/Sub. NOTE: image.received.inspect was deleted on 2026-10-22, once

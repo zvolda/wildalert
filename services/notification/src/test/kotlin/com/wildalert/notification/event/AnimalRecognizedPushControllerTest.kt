@@ -54,7 +54,9 @@ class AnimalRecognizedPushControllerTest {
 
     @Test
     fun `parses the JSON published by the Python recognition service`() {
-        val payload = """{"eventId":"afc3e286-b870-4787-a5aa-b097a08bed2e","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","hunterId":"5b0f2f2e-8c1d-4b7a-9e3f-1d2c3b4a5f60","storageKey":"inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg","species":"wild boar","confidence":0.9998869895935059,"lowConfidence":false,"occurredAt":"2026-09-15T11:40:58.981643Z"}"""
+        // Captured from app/events.py itself, not hand-written: note recipient carries the hunter's
+        // inbound address and hunterId is now always null.
+        val payload = """{"eventId":"afc3e286-b870-4787-a5aa-b097a08bed2e","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","recipient":"7f3k9qabcdef@in.wildalert.local","hunterId":null,"storageKey":"inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg","species":"wild boar","confidence":0.9998869895935059,"lowConfidence":false,"occurredAt":"2026-09-15T11:40:58.981643Z"}"""
 
         val response = controller.onPush(push(payload))
 
@@ -63,7 +65,7 @@ class AnimalRecognizedPushControllerTest {
             AnimalRecognized(
                 eventId = UUID.fromString("afc3e286-b870-4787-a5aa-b097a08bed2e"),
                 sourceEventId = UUID.fromString("aaaaaaaa-0000-4000-8000-000000000001"),
-                hunterId = UUID.fromString("5b0f2f2e-8c1d-4b7a-9e3f-1d2c3b4a5f60"),
+                recipient = "7f3k9qabcdef@in.wildalert.local",
                 storageKey = "inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg",
                 species = "wild boar",
                 confidence = 0.9998869895935059,
@@ -74,8 +76,21 @@ class AnimalRecognizedPushControllerTest {
     }
 
     @Test
-    fun `unknown sender (null hunterId) and extra fields are accepted`() {
-        val payload = """{"eventId":"aec43fb5-491a-4ddc-a1b0-31b449614b4b","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000002","hunterId":null,"storageKey":"inbound/x.jpg","species":"fallow deer","confidence":0.65,"lowConfidence":true,"occurredAt":"2026-09-15T11:41:00.763291Z","cameraId":"north"}"""
+    fun `still parses a pre-change payload that carries a hunter id and no recipient`() {
+        // Replay from a dead-letter topic: published before the recipient moved onto the event.
+        val payload = """{"eventId":"afc3e286-b870-4787-a5aa-b097a08bed2e","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","hunterId":"5b0f2f2e-8c1d-4b7a-9e3f-1d2c3b4a5f60","storageKey":"inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg","species":"wild boar","confidence":0.9998869895935059,"lowConfidence":false,"occurredAt":"2026-09-15T11:40:58.981643Z"}"""
+
+        val response = controller.onPush(push(payload))
+
+        assertThat(response.statusCode.value()).isEqualTo(204)
+        val event = notificationService.received.single()
+        assertThat(event.recipient).isNull()
+        assertThat(event.hunterId).isEqualTo(UUID.fromString("5b0f2f2e-8c1d-4b7a-9e3f-1d2c3b4a5f60"))
+    }
+
+    @Test
+    fun `an event with no recipient and extra fields is accepted`() {
+        val payload = """{"eventId":"aec43fb5-491a-4ddc-a1b0-31b449614b4b","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000002","recipient":null,"hunterId":null,"storageKey":"inbound/x.jpg","species":"fallow deer","confidence":0.65,"lowConfidence":true,"occurredAt":"2026-09-15T11:41:00.763291Z","cameraId":"north"}"""
 
         val response = controller.onPush(push(payload))
 

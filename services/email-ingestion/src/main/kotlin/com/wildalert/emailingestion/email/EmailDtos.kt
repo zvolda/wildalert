@@ -1,7 +1,5 @@
 package com.wildalert.emailingestion.email
 
-import java.util.UUID
-
 /** Metadata about one extracted image, plus the object key it was stored under. */
 data class ImageInfo(
     val filename: String?,
@@ -14,10 +12,10 @@ data class ImageInfo(
 data class EmailSummary(
     val from: String?,
     val subject: String?,
-    // The recipient address that identified the hunter, or null if none matched.
+    // The address on our inbound domain that this email was sent to, or null if it was sent to
+    // none of ours. Which hunter that belongs to is notification's business, not ours — so there
+    // is deliberately no hunter id here any more.
     val matchedRecipient: String?,
-    // Which registered hunter the email belongs to, or null if no recipient matched.
-    val matchedHunterId: UUID?,
     val imageCount: Int,
     val images: List<ImageInfo>,
 )

@@ -22,17 +22,19 @@ from app.publisher import get_event_publisher
 
 client = TestClient(app)
 
-HUNTER_ID = UUID("5b0f2f2e-8c1d-4b7a-9e3f-1d2c3b4a5f60")
+RECIPIENT = "7f3k9qabcdef@in.wildalert.local"
 SOURCE_EVENT_ID = UUID("aaaaaaaa-0000-4000-8000-000000000001")
 STORAGE_KEY = "inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg"
 
 
-def image_received(hunter_id: UUID | None = HUNTER_ID, event_id: UUID = SOURCE_EVENT_ID) -> str:
+def image_received(
+    recipient: str | None = RECIPIENT, event_id: UUID = SOURCE_EVENT_ID
+) -> str:
     """The JSON email-ingestion publishes (camelCase, as Jackson produces it)."""
-    hunter = f'"{hunter_id}"' if hunter_id else "null"
+    to = f'"{recipient}"' if recipient else "null"
     return (
         f'{{"storageKey":"{STORAGE_KEY}","contentType":"image/jpeg",'
-        f'"senderEmail":"hunter@example.com","hunterId":{hunter},'
+        f'"senderEmail":"hunter@example.com","recipient":{to},"hunterId":null,'
         f'"eventId":"{event_id}","occurredAt":"2026-09-15T11:40:58.981643Z"}}'
     )
 
@@ -98,19 +100,20 @@ def test_recognizes_the_stored_image_and_publishes_the_result(source, publisher)
     assert source.requested == [STORAGE_KEY]
     result = publisher.published[0]
     assert result.source_event_id == SOURCE_EVENT_ID
-    assert result.hunter_id == HUNTER_ID
+    assert result.recipient == RECIPIENT
     assert result.storage_key == STORAGE_KEY
     assert result.species == "wild boar"  # the default stub classifier
     assert result.low_confidence is False
 
 
-def test_event_from_an_unknown_sender_has_no_hunter(publisher):
+def test_event_on_no_address_of_ours_has_no_recipient(publisher):
+    # Still classified and published: whether anyone is texted is notification's decision.
     response = client.post(
-        "/events/image-received", json=envelope(image_received(hunter_id=None))
+        "/events/image-received", json=envelope(image_received(recipient=None))
     )
 
     assert response.status_code == 204
-    assert publisher.published[0].hunter_id is None
+    assert publisher.published[0].recipient is None
 
 
 def test_invalid_event_is_dead_lettered_without_publishing(publisher):

@@ -46,13 +46,18 @@ webhook:
   secret: ${WEBHOOK_SECRET:}
   header-name: ${WEBHOOK_HEADER_NAME:X-Webhook-Secret}
 
+inbound:
+  # The domain hunters' personal inbound addresses live on (`<token>@<this>`). Used only to pick
+  # which of an email's recipients is ours — plain string matching, no lookup. Must match
+  # INBOUND_EMAIL_DOMAIN on user-account, which mints those addresses.
+  email-domain: ${INBOUND_EMAIL_DOMAIN:in.wildalert.local}
+
 services:
-  # Base URL of the user-account service, used to match a sender to a hunter.
+  # Unused since the hunter lookup moved to notification (the recipient now travels on the event).
+  # Kept for one release so the dormant HunterLookupClient still has config if it is reinstated;
+  # delete with that class.
   user-account:
     base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
-    # 'none' (default) or 'gcp-id-token'. In the cloud user-account runs with Cloud Run's
-    # "Require authentication", so calls need a Google ID token whose audience is base-url;
-    # set USER_ACCOUNT_AUTH=gcp-id-token there. Locally there is nothing to authenticate to.
     auth: ${USER_ACCOUNT_AUTH:none}
 
 events:

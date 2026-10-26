@@ -26,12 +26,11 @@ class PubSubEventPublisherTest {
     fun `publishes ImageReceived as JSON to the topic`() {
         given(pubSub.publish(anyString(), anyString()))
             .willReturn(CompletableFuture.completedFuture("message-1"))
-        val hunterId = UUID.randomUUID()
         val event = ImageReceived(
             storageKey = "inbound/2026/09/15/abc.jpg",
             contentType = "image/jpeg",
             senderEmail = "hunter@example.com",
-            hunterId = hunterId,
+            recipient = "7f3k9qabcdef@in.wildalert.local",
         )
 
         publisher.publish(event)
@@ -42,7 +41,7 @@ class PubSubEventPublisherTest {
         assertThat(topic.value).isEqualTo("image.received")
         assertThat(payload.value)
             .contains("\"storageKey\":\"inbound/2026/09/15/abc.jpg\"")
-            .contains("\"hunterId\":\"$hunterId\"")
+            .contains("\"recipient\":\"7f3k9qabcdef@in.wildalert.local\"")
             .contains(event.eventId.toString())
     }
 
@@ -54,14 +53,14 @@ class PubSubEventPublisherTest {
             storageKey = "inbound/x.jpg",
             contentType = "image/jpeg",
             senderEmail = null,
-            hunterId = null,
+            recipient = null,
         )
 
         publisher.publish(event)
 
         val payload = ArgumentCaptor.forClass(String::class.java)
         verify(pubSub).publish(anyString(), payload.capture())
-        assertThat(payload.value).contains("\"hunterId\":null")
+        assertThat(payload.value).contains("\"recipient\":null")
     }
 
     /**
@@ -76,7 +75,7 @@ class PubSubEventPublisherTest {
             storageKey = "inbound/y.jpg",
             contentType = "image/jpeg",
             senderEmail = null,
-            hunterId = null,
+            recipient = null,
         )
 
         assertThatThrownBy { publisher.publish(event) }

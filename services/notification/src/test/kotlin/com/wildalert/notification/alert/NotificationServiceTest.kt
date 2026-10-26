@@ -34,12 +34,13 @@ class NotificationServiceTest {
     private val service = NotificationService(hunterClient, smsSender, processedEvents)
 
     private val hunterId = UUID.randomUUID()
+    private val recipient = "7f3k9qabcdef@in.wildalert.local"
 
     @Test
     fun `texts the hunter's phone for a recognized animal`() {
-        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
 
-        service.notify(event(hunterId))
+        service.notify(event())
 
         assertThat(smsSender.sent).containsExactly(
             SmsMessage("+420123456789", "WildAlert: wild boar detected (97% confidence)"),
@@ -48,7 +49,7 @@ class NotificationServiceTest {
 
     @Test
     fun `unknown sender is not looked up or texted`() {
-        service.notify(event(hunterId = null))
+        service.notify(event(recipient = null))
 
         verifyNoInteractions(hunterClient)
         assertThat(smsSender.sent).isEmpty()
@@ -56,34 +57,34 @@ class NotificationServiceTest {
 
     @Test
     fun `hunter that no longer exists is not texted`() {
-        given(hunterClient.findById(hunterId)).willReturn(null)
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(null)
 
-        service.notify(event(hunterId))
+        service.notify(event())
 
         assertThat(smsSender.sent).isEmpty()
     }
 
     @Test
     fun `inactive hunter is not texted`() {
-        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = false))
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(HunterContact(hunterId, "+420123456789", active = false))
 
-        service.notify(event(hunterId))
+        service.notify(event())
 
         assertThat(smsSender.sent).isEmpty()
     }
 
     @Test
     fun `user-account outage propagates so the event is retried, not dropped`() {
-        given(hunterClient.findById(hunterId)).willThrow(ResourceAccessException("Connection refused"))
+        given(hunterClient.findByInboundAddress(recipient)).willThrow(ResourceAccessException("Connection refused"))
 
-        assertThatThrownBy { service.notify(event(hunterId)) }.isInstanceOf(ResourceAccessException::class.java)
+        assertThatThrownBy { service.notify(event()) }.isInstanceOf(ResourceAccessException::class.java)
         assertThat(smsSender.sent).isEmpty()
     }
 
     @Test
     fun `a redelivered event does not text the hunter twice`() {
-        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
-        val event = event(hunterId)
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        val event = event()
 
         service.notify(event)
         service.notify(event.copy(eventId = UUID.randomUUID())) // republished result, same source photo
@@ -93,17 +94,17 @@ class NotificationServiceTest {
 
     @Test
     fun `two photos from the same hunter each get their own SMS`() {
-        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
 
-        service.notify(event(hunterId))
-        service.notify(event(hunterId)) // different sourceEventId
+        service.notify(event())
+        service.notify(event()) // different sourceEventId
 
         assertThat(smsSender.sent).hasSize(2)
     }
 
     @Test
     fun `a failed send releases the claim so the retry still texts the hunter`() {
-        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
         val failing = object : SmsSender {
             var fail = true
             val sent = mutableListOf<SmsMessage>()
@@ -114,7 +115,7 @@ class NotificationServiceTest {
             }
         }
         val retryingService = NotificationService(hunterClient, failing, processedEvents)
-        val event = event(hunterId)
+        val event = event()
 
         assertThatThrownBy { retryingService.notify(event) }.isInstanceOf(IllegalStateException::class.java)
         failing.fail = false
@@ -124,14 +125,38 @@ class NotificationServiceTest {
         assertThat(failing.sent).hasSize(1)
     }
 
-    private fun event(hunterId: UUID?) = AnimalRecognized(
+    private fun event(recipient: String? = this.recipient) = AnimalRecognized(
         eventId = UUID.randomUUID(),
         sourceEventId = UUID.randomUUID(),
-        hunterId = hunterId,
+        recipient = recipient,
         storageKey = "inbound/2026/09/15/a.jpg",
         species = "wild boar",
         confidence = 0.97,
         lowConfidence = false,
         occurredAt = Instant.now(),
     )
+
+    /** What recognition published before the recipient moved onto the event. */
+    private fun legacyEvent(hunterId: UUID?) = event(recipient = null).copy(hunterId = hunterId)
+
+    @Test
+    fun `falls back to the hunter id on an event published before the change`() {
+        // A dead-letter replay can deliver one of these days later; it must still reach its hunter.
+        given(hunterClient.findById(hunterId)).willReturn(HunterContact(hunterId, "+420123456789", active = true))
+
+        service.notify(legacyEvent(hunterId))
+
+        assertThat(smsSender.sent).hasSize(1)
+    }
+
+    @Test
+    fun `an address that belongs to nobody sends nothing`() {
+        // email-ingestion forwards any address on our domain without checking it, so this is the
+        // normal outcome for mail to a made-up name -- not an error.
+        given(hunterClient.findByInboundAddress(recipient)).willReturn(null)
+
+        service.notify(event())
+
+        assertThat(smsSender.sent).isEmpty()
+    }
 }

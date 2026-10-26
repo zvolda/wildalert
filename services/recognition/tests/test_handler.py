@@ -31,17 +31,20 @@ class RecordingClassifier:
         return Recognition(species="red deer", confidence=self.confidence)
 
 
-def _event(key: str = "inbound/2026/09/15/a.png", hunter_id=None) -> ImageReceived:
+def _event(
+    key: str = "inbound/2026/09/15/a.png",
+    recipient: str | None = None,
+) -> ImageReceived:
     return ImageReceived(
         storage_key=key,
-        hunter_id=hunter_id,
+        recipient=recipient,
         event_id=uuid4(),
         occurred_at=datetime.now(UTC),
     )
 
 
 def test_classifies_the_stored_image_and_links_back_to_the_source_event():
-    event = _event(hunter_id=uuid4())
+    event = _event(recipient="7f3k9qabcdef@in.wildalert.local")
     classifier = RecordingClassifier(confidence=0.9)
 
     result = handle(event, FakeImageSource({event.storage_key: IMAGE}), classifier, threshold=0.7)
@@ -50,7 +53,8 @@ def test_classifies_the_stored_image_and_links_back_to_the_source_event():
     assert result.species == "red deer"
     assert result.low_confidence is False
     assert result.source_event_id == event.event_id
-    assert result.hunter_id == event.hunter_id
+    # The only thing identifying the hunter: losing it here would lose the alert.
+    assert result.recipient == event.recipient
     assert result.storage_key == event.storage_key
     assert result.event_id != event.event_id  # a new event, not a copy
 

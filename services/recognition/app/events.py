@@ -20,11 +20,21 @@ class _Event(BaseModel):
 
 
 class ImageReceived(_Event):
-    """Consumed from `image.received` — published by email-ingestion once per stored image."""
+    """Consumed from `image.received` — published by email-ingestion once per stored image.
+
+    `recipient` is the hunter's inbound address the email was sent to — who the alert is for.
+    It is deliberately not resolved to a hunter id upstream: doing that meant a synchronous call
+    to user-account inside the webhook, and a scaled-to-zero user-account silently cost the alert.
+    We only carry it through to AnimalRecognized; notification resolves it.
+
+    `hunter_id` is deprecated and always absent on new events. Kept so events published before
+    the change (including any sitting in a dead-letter topic) still parse.
+    """
 
     storage_key: str
     content_type: str | None = None
     sender_email: str | None = None
+    recipient: str | None = None
     hunter_id: UUID | None = None
     event_id: UUID
     occurred_at: datetime
@@ -39,7 +49,8 @@ class AnimalRecognized(_Event):
 
     event_id: UUID = Field(default_factory=uuid4)
     source_event_id: UUID
-    hunter_id: UUID | None
+    recipient: str | None = None
+    hunter_id: UUID | None = None
     storage_key: str
     species: str
     confidence: float = Field(ge=0.0, le=1.0)

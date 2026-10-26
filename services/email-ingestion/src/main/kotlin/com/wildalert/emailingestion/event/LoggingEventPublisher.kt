@@ -16,8 +16,8 @@ class LoggingEventPublisher : EventPublisher {
 
     override fun publish(event: ImageReceived) {
         log.info(
-            "[FAKE EVENT] ImageReceived id={} key={} contentType={} from={} hunterId={}",
-            event.eventId, event.storageKey, event.contentType, event.senderEmail, event.hunterId,
+            "[FAKE EVENT] ImageReceived id={} key={} contentType={} from={} recipient={}",
+            event.eventId, event.storageKey, event.contentType, event.senderEmail, event.recipient,
         )
     }
 }

@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-22. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-26. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -513,6 +513,69 @@ longer exist in the repo, but what each slice proved still holds._
     candidate fixes. Recommended: publish the recipient address on `ImageReceived` and resolve the
     hunter in notification, where Pub/Sub's retries already absorb cold starts — it also removes a
     synchronous dependency from the ingestion path.
+
+- **Slice 12 (done 2026-10-26, pending review): a real SMS reached a real phone. The product
+  works.** Photo emailed to `pwjpd75ivta9@wildalert.app` → R2 + `image.received` (08:06:05, hunter
+  matched) → recognition **wild boar, confidence 1.00** (08:07:39) → notification `attempt=1`
+  (08:07:54) → **GoSMS accepted for +420774584941** (08:07:56), and the SMS arrived. ~110s
+  end to end, most of it recognition's cold start; no retries, nothing dead-lettered.
+  - **Twilio was abandoned on cost, not capability.** It wants **$12/month to lease a number**, and
+    its free alphanumiceric sender needs ~3 weeks of pre-registration in Czechia plus a paid
+    account. Czech gateways have no monthly fee at all. BulkGate (cheapest on paper) **rejected the
+    registration** — Czech A2P providers generally want a business entity — so GoSMS, which states
+    it serves individuals, got the work. `TwilioSmsSender` stays in the codebase, unused, switchable
+    by one env var.
+  - **`GoSmsSender`** (`sms.provider=gosms`): OAuth2 client-credentials, token cached for the hour
+    GoSMS grants (one token request per hour, not per SMS), refresh-and-retry once on a 401.
+    Credentials are two per-secret Secret Manager entries; `GOSMS_CHANNEL` is a plain env var.
+  - **The channel id came from the API, not the panel:** `GET /api/v1/` returns credit plus the
+    channel list. Ours is `511762` ("SMS channel", source `GoSMS-test`).
+  - **Two things cost a revision each, both avoidable.** A literal `CHANNEL_ID` placeholder reached
+    the deploy twice: the property binds to an `Int`, so the container failed to start and
+    `notification-00002`/`00003` are dead revisions. And the first `/messages/test` call returned
+    *"Not enough credit"* — the 20 CZK sign-up bonus only lands once the phone number is verified.
+    **`/api/v1/messages/test` validates credentials, channel, recipient and message length without
+    sending or spending credit** — use it before every deploy.
+  - **Real price is 1.20 CZK per SMS, not the 0.26 Kč headline**, because `GoSMS-test` is the trial
+    channel. 20 CZK ≈ 16 alerts. The message is 45 chars, one part, no diacritics — Czech wording
+    would halve the limit to 70.
+  - **The response shape was guessed wrong and the defensive branch saved it.** A real send returns
+    `{"recipients":{"invalid":[],"optedOut":[]},"link":"/api/v1/messages/47102867094"}` — **no `id`
+    field**; the id is the last segment of `link`. The sender logged a warning and recorded
+    `id=unknown` rather than throwing, which is what one of its tests pins: a gateway that has
+    already accepted a message must not be made to send it twice over a parsing quibble. Now parsed
+    properly, with a test carrying the verbatim response. 42 tests, 0 failures.
+
+- **Slice 13 (code done 2026-10-26, not yet deployed): the cold-start bug is fixed by moving the
+  hunter lookup out of the webhook.** The recipient address now travels on the events and
+  **notification** resolves it, so a scaled-to-zero user-account costs a Pub/Sub redelivery instead
+  of the alert. email-ingestion makes **no calls to user-account at all** any more.
+  - **Why this and not a bigger timeout or `min-instances=1`:** a timeout only widens the window,
+    and min-instances gives up scale-to-zero (~$64/month for recognition's 8 GiB; user-account would
+    be cheaper but still permanent). Moving the lookup puts it where a retry already exists.
+  - **The wrinkle:** email-ingestion used to learn *which* recipient was the hunter's **from the
+    lookup itself** (`candidates.firstNotNullOfOrNull { findByInboundAddress(it) }`). It now matches
+    candidates against the configured **`inbound.email-domain`** — plain string work, no network.
+    So `INBOUND_EMAIL_DOMAIN=wildalert.app` is **required on email-ingestion**; unset, every photo
+    publishes with no recipient and nobody is ever texted.
+  - **A privacy improvement fell out of it:** only an address on our own domain goes on the event.
+    The hunter's personal Gmail (in the email's `To`) used to be a lookup candidate and could end up
+    in logs; now it never leaves the parser. There is a test for it.
+  - **A behaviour change worth knowing:** email-ingestion can no longer tell a real token from a
+    made-up one, so mail to any address on our domain is forwarded and notification answers "not a
+    hunter". Spam therefore still costs a storage write and a recognition run — same as before,
+    since unmatched photos were already stored and classified, but the option of filtering early is
+    gone. If it bites, the filter belongs in the worker or as a cheap token-shape check.
+  - **Rollout is order-independent**: `recipient` is optional on both contracts and `hunterId` is
+    kept as a fallback, so an old event in flight (or replayed from a dead-letter topic) still
+    reaches its hunter. Tests pin both directions, including a legacy payload. Removing `hunterId`
+    is a follow-up.
+  - **`HunterLookupClient`, `UserAccountAuth` and `GcpIdTokenUserAccountAuth` in email-ingestion are
+    now dead code** — left in place for this slice so the change is easy to review and revert;
+    deleting them (and the `run.invoker` grant on user-account) is the next cleanup.
+  - **Tests:** 104 Kotlin (24 user-account, 35 email-ingestion, 45 notification) + 34 Python, all
+    green. The cross-language contract test now carries a payload **generated from `events.py`
+    itself** rather than hand-written.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only

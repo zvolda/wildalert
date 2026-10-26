@@ -82,18 +82,26 @@ class GoSmsSender(
 
     /**
      * The id is informational — nothing downstream keys off it (idempotency uses the event id),
-     * so an unexpected response shape must not fail a send that the gateway already accepted.
-     * GoSMS returns the message object either at the root or under `data` depending on the
-     * endpoint; both are tried, and anything else is logged rather than thrown.
+     * so an unexpected response shape must not fail a send the gateway has already accepted.
+     *
+     * What a real send returns (observed 2026-10-26) carries **no `id` field at all**:
+     * `{"recipients":{"invalid":[],"optedOut":[]},"link":"/api/v1/messages/47102867094"}` — the id
+     * is the last segment of `link`. The `id` and `data.id` forms are kept because other endpoints
+     * use them, and anything unrecognised is logged rather than thrown.
      */
     private fun messageId(response: JsonNode?): String {
-        val id = response?.path("id")?.takeIf { !it.isMissingNode && !it.isNull }
-            ?: response?.path("data")?.path("id")?.takeIf { !it.isMissingNode && !it.isNull }
-        if (id == null) {
-            log.warn("GoSMS response carried no message id; body={}", response)
-            return "unknown"
-        }
-        return id.asText()
+        fun JsonNode?.usable() = this != null && !isMissingNode && !isNull
+
+        val direct = response?.path("id")?.takeIf { it.usable() }
+            ?: response?.path("data")?.path("id")?.takeIf { it.usable() }
+        if (direct != null) return direct.asText()
+
+        val link = response?.path("link")?.takeIf { it.usable() }?.asText()
+        val fromLink = link?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+        if (fromLink != null) return fromLink
+
+        log.warn("GoSMS response carried no message id; body={}", response)
+        return "unknown"
     }
 
     private fun token(forceRefresh: Boolean = false): String {
