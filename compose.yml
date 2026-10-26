@@ -8,7 +8,7 @@
 # Two ways to run the pipeline:
 #
 #   docker compose up -d                        # infra only (Postgres + Pub/Sub emulator)
-#   docker compose --profile local up -d --build # infra + all four services, in containers
+#   docker compose --profile local up -d --build # infra + all five services, in containers
 #
 # The second form is the easy one, and the reason is the emulator: it delivers events by POSTing to
 # the services, so it has to be able to reach them. Inside the compose network it reaches them by
@@ -67,6 +67,7 @@ services:
       # instead? Override these with http://host.docker.internal:8084/... and :8082/...
       RECOGNITION: ${PUSH_RECOGNITION_URL:-http://recognition:8084/events/image-received}
       NOTIFICATION: ${PUSH_NOTIFICATION_URL:-http://notification:8082/api/events/animal-recognized}
+      HISTORY: ${PUSH_HISTORY_URL:-http://detection-history:8086/api/events/animal-recognized}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -107,6 +108,22 @@ services:
             }}' >/dev/null
         echo "subscription animal.recognized.notification -> $$NOTIFICATION"
 
+        # A SECOND subscription on the same topic — this is fan-out, and the reason the pipeline
+        # is a broker rather than a chain of HTTP calls. detection-history gets its own copy of
+        # every recognised animal and acknowledges it independently, so it can be down, slow or
+        # redeploying without delaying an SMS, and neither consumer knows the other exists.
+        curl -sf -X PUT "$$E/v1/projects/$$P/subscriptions/animal.recognized.history" \
+          -H 'Content-Type: application/json' -d '{
+            "topic": "projects/'"$$P"'/topics/animal.recognized",
+            "pushConfig": { "pushEndpoint": "'"$$HISTORY"'" },
+            "ackDeadlineSeconds": 60,
+            "retryPolicy": { "minimumBackoff": "10s", "maximumBackoff": "600s" },
+            "deadLetterPolicy": {
+              "deadLetterTopic": "projects/'"$$P"'/topics/animal.recognized.dlt",
+              "maxDeliveryAttempts": 5
+            }}' >/dev/null
+        echo "subscription animal.recognized.history -> $$HISTORY"
+
         # Pull subscriptions on the dead-letter topics. Without these the DLTs would DISCARD
         # everything sent to them — a topic with no subscription drops messages — and the whole
         # "nothing is lost" property would be a fiction. Pull them to inspect failures:
@@ -120,7 +137,7 @@ services:
           echo "subscription $$t.dlt.inspect"
         done
 
-        echo "pub/sub emulator ready: 4 topics, 4 subscriptions"
+        echo "pub/sub emulator ready: 4 topics, 5 subscriptions"
 
   # ---------------------------------------------------------------------------------------------
   # The services themselves, under the `local` profile so plain `docker compose up` stays infra-only.
@@ -171,6 +188,30 @@ services:
       SMS_PROVIDER: logging
     ports:
       - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  detection-history:
+    image: eclipse-temurin:25-jre
+    container_name: wildalert-detection-history
+    profiles: ["local"]
+    command: sh -c 'java -jar $$(ls /app/*.jar | grep -v plain | head -1)'
+    volumes:
+      - ./services/detection-history/build/libs:/app:ro
+    environment:
+      # 8085 is the Pub/Sub emulator, hence 8086.
+      PORT: 8086
+      # Turns on the push endpoint (application-pubsub.yml). No Pub/Sub client needed here.
+      SPRING_PROFILES_ACTIVE: pubsub
+      # The real store. Unlike notification's idempotency table, this is not an optimisation:
+      # the in-memory default would forget every detection on restart.
+      HISTORY_STORE: postgres
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "8086:8086"
     depends_on:
       postgres:
         condition: service_healthy

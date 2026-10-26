@@ -11,6 +11,7 @@ Event-driven microservices: Kotlin/Spring Boot + one Python recognition service.
 Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
            → recognition (Python/DeepFaune) --AnimalRecognized--> Pub/Sub
                 → notification (Kotlin) → SMS (Twilio)
+                → detection-history (Kotlin/jOOQ) → Postgres   [second subscription, fan-out]
      user-account (Kotlin) — email→phone mapping, shared Postgres
 ```
 
@@ -41,6 +42,10 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
     transport; the `pubsub` profile sets `events.provider` and the GCP auto-configuration together,
     which must stay off by default or startup requires GCP credentials)
   - `@SpringBootTest contextLoads` runs without external infra (producers/clients are lazy).
+- **jOOQ (detection-history only):** the generated tables come from the Flyway migrations via
+  `DDLDatabase` (replayed into in-memory H2), so **no database is needed to build**. `generateJooq`
+  runs automatically before `compileKotlin`; change a migration and the Kotlin referencing that
+  column stops compiling. `JooqDetectionStoreSqlTest` asserts the rendered SQL with no connection.
 - **Recognition service** (Python 3.12+; venv in `services/recognition/.venv`):
   - `cd services/recognition && pytest` — tests run against the **stub** classifier (no ML deps)
   - The real DeepFaune model runs only in the Docker image

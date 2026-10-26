@@ -78,7 +78,7 @@ Key realities established during planning:
 | Technology | Status / fit | Where |
 |---|---|---|
 | **Spring Boot + PostgreSQL** | In use (3 services, Flyway). Deepen with a detection-history table and the **transactional outbox** pattern. | Phase 5, 8 |
-| **jOOQ** | Good fit for SQL-heavy reads (dashboard/reporting). Keep user-account on JPA; use jOOQ in the detection-history service to compare both. Generate code from Flyway SQL via `DDLDatabase` (no live DB needed — avoids the Windows↔WSL2 Docker port issue). | Phase 8 |
+| **jOOQ** | **In use** (detection-history, 2026-10-26) for the reporting reads, with user-account staying on JPA so the two are directly comparable. Codegen from the Flyway SQL via `DDLDatabase` through in-memory H2, so the build needs no database at all — and a column renamed in SQL breaks the Kotlin at compile time. | Phase 8 |
 | **S3-compatible storage** | In use (`R2ImageStore`, S3 SDK). Deepen: boto3 fetch in recognition, presigned URLs, lifecycle rules, optional local S3-compatible server (check MinIO's current distribution/licensing; Garage/SeaweedFS as alternatives). GCS also offers an S3-compatible XML API (HMAC keys). | Phase 5, 7, 8 |
 | **Cloud Run** | Strong fit — default hosting for all containers. | Phase 6 |
 | **Cloud SQL** | Good fit, small fixed cost (see Open Decisions). | Phase 6 |
@@ -335,9 +335,21 @@ then the async flow, then deploy, then scale.
         — *signup form built in slice 1 (`web/`); phone verification still to do*
   - [x] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
         or entering it directly in the camera app) — slice 1, shown right after registering
-  - [ ] **Detection History service** (Kotlin/Spring Boot + Postgres): consume
+  - [x] **Detection History service** (Kotlin/Spring Boot + Postgres): consume
         `AnimalRecognized`, store detections; reporting queries with **jOOQ** (codegen via
-        `DDLDatabase` from Flyway SQL)
+        `DDLDatabase` from Flyway SQL). Built 2026-10-26, in parallel with the frontend's slice 1
+        because it needs nothing from the frontend and shared no files with it. Taken as a
+        **second push subscription** on `animal.recognized` rather than a change to notification —
+        fan-out, so history can be down without delaying an SMS and neither consumer knows the
+        other exists. Keyed on the event's `recipient`, not a hunter id, so recording a detection
+        makes **no synchronous call to user-account**: a cold start may delay an SMS, but it must
+        never be able to lose history. Idempotent on `source_event_id` as the primary key — the
+        write *is* the effect, so no separate claim/release table is needed. jOOQ codegen runs off
+        the Flyway SQL through in-memory H2, so the build needs no database; `DDLDatabase` is also
+        why the migration avoids `timestamptz`/`text` shorthands. 44 tests, no infrastructure.
+        *Still open:* deploy (needs a service account + the real push subscription), presigned
+        photo URLs, and auth before the read API is exposed — the inbound address is currently the
+        only thing identifying a hunter.
   - [ ] Dashboard: detection history, photos, species
   - [ ] Show photos via **S3 presigned URLs** (bucket stays private)
   - [ ] Plan/subscription management
