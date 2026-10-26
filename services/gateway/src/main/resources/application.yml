@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: gateway
+
+  # Loads config from the git-ignored .env (repo root) for local dev, like the other services.
+  config:
+    import: optional:file:.env[.properties]
+
+  web:
+    resources:
+      # The built React app (web/dist) is copied here at image build time -- see the Dockerfile.
+      # There is deliberately no placeholder index.html in the repo: if the copy ever failed, a
+      # 404 is a clear signal, where a stub page would look like a working deploy serving the
+      # wrong thing. Locally the UI is served by Vite on :5173 instead, so this stays empty.
+      static-locations: classpath:/static/
+
+server:
+  # Cloud Run injects PORT. 8080 locally -- the front door, and the only service here that a
+  # browser talks to (user-account 8081, notification 8082, email-ingestion 8083,
+  # detection-history 8086).
+  port: ${PORT:8080}
+
+services:
+  user-account:
+    # Where to forward POST /api/hunters. Locally the open service on 8081; in the cloud the
+    # private Cloud Run URL, which is also the ID token's audience.
+    base-url: ${USER_ACCOUNT_BASE_URL:http://localhost:8081}
+    # `gcp-id-token` in the cloud, where user-account requires authentication. Anything else
+    # (including unset) means no credential is attached, which is what local dev and the tests
+    # want -- see UserAccountAuth.
+    auth: ${USER_ACCOUNT_AUTH:none}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. This service is public, so env/metrics/heapdump would hand configuration
+        # to anyone who asked.
+        include: health
+  endpoint:
+    health:
+      # Adds /actuator/health/liveness and /readiness -- the probes Cloud Run calls.
+      probes:
+        enabled: true
+
+logging:
+  level:
+    # Logs the matched route per request, which is the one thing worth seeing when a proxied
+    # call does not arrive where you expected.
+    org.springframework.cloud.gateway.server.mvc: INFO

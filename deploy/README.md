@@ -50,7 +50,9 @@ gets entered.
 | Build trigger | `email-ingestion-main` — same `cloudbuild.yaml`, `_SERVICE=email-ingestion` |
 | Startup probe | **Cloud Run's default TCP check on 8080**, not the HTTP probe on `/actuator/health/readiness` — see the Git Bash path-mangling entry under *Troubleshooting*. Add the HTTP probe from the console when convenient; here it would only mean "Spring started", as this service has no database. |
 
-**It is public on purpose, and it is the only one.** Cloudflare Workers call in from outside Google
+**It is public on purpose.** It was the only public service until `gateway` (below), which is
+public for a different and unavoidable reason: a browser has no Google identity at all.
+Cloudflare Workers call in from outside Google
 Cloud, so there is no Google identity to grant `run.invoker` to; `WebhookAuthFilter`'s shared secret
 is the protection. **It authenticates *outwards* with an ID token** (`UserAccountAuth`,
 `USER_ACCOUNT_AUTH=gcp-id-token`), because user-account requires authentication — without the
@@ -62,6 +64,32 @@ calls to user-account at all, and needs `INBOUND_EMAIL_DOMAIN` set to pick our o
 an email's recipients.
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
+
+### gateway — the UI's front door (built, not yet deployed)
+
+| Setting | Value |
+|---|---|
+| Cloud Run service | `gateway`, europe-west3, **Allow unauthenticated**, ingress All, min/max 0/2, 1 vCPU / 512 MiB |
+| Service account | `wildalert-gateway@wildalert-prod.iam.gserviceaccount.com` — **does not exist yet; create it before deploying** |
+| Service account roles | `roles/run.invoker` **on service** `user-account`. Nothing else: no database, no secrets, no Pub/Sub |
+| Env | `USER_ACCOUNT_BASE_URL=https://user-account-lznkorfm4q-ey.a.run.app`, `USER_ACCOUNT_AUTH=gcp-id-token` |
+| Secrets | none |
+| Image | built from the **repo root** by `services/gateway/Dockerfile`, which runs npm *and* Gradle — the only two-toolchain image here. `_SERVICE=gateway` with the shared `cloudbuild.yaml` |
+| Probes | startup + readiness on `/actuator/health/liveness` and `/readiness`; no database, so readiness means "started" |
+
+**Why it is public and why that is not a widening of the attack surface.** A browser cannot hold a
+Google ID token, so *something* has to be publicly reachable and mint one on its behalf. Doing it
+here keeps `user-account` private and puts the question "what can the internet reach?" in a single
+readable file, `ApiRoutes.kt`. **The route list is one method and one path** — `POST /api/hunters`.
+user-account's lookup endpoints (`by-email`, `by-inbound-address`, `GET /api/hunters/{id}`) all
+return a hunter's phone number and are deliberately *not* proxied; a wildcard route would have
+published all three.
+
+**The thing to decide before deploying:** registration is unauthenticated and unthrottled. That was
+acceptable while nothing was public. Deploying this makes it reachable, and every signup is a
+Cloud SQL row and a future SMS cost. `max-instances` caps spend, not request rate. Cloudflare
+Turnstile on the form (free, the account is already on Cloudflare) or a Cloudflare rate-limiting
+rule in front is the cheap fix. See `CONSOLE.md` step 10h.
 
 ### Pub/Sub (topics and the `.dlt.inspect` pull subscriptions exist; push subscriptions wait for the consumers)
 

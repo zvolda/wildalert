@@ -32,10 +32,11 @@ steps:
         npm --version
 
         echo "--- install"
-        # `npm install` rather than `npm ci`, because package-lock.json is not committed yet
-        # (it cannot be generated on the machine this project is developed on). Once a lockfile
-        # lands, switch this to `npm ci` so the build is reproducible.
-        npm install --no-fund --no-audit
+        # `npm ci` installs exactly what package-lock.json pins and fails if package.json and the
+        # lockfile disagree -- so the build cannot silently pick up a new transitive version.
+        # The lockfile itself was generated in this same image (it cannot be produced on the dev
+        # machine); to refresh it, run `npm install` here and republish it as an artifact.
+        npm ci --no-fund --no-audit
         echo "--- resolved versions"
         npm ls --depth=0 || true
         echo "--- tests"

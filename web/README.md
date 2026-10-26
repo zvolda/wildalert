@@ -36,13 +36,20 @@ The browser calls a **same-origin** `/api/hunters`, and Vite's dev server proxie
 `http://localhost:8081` (`server.proxy` in `vite.config.ts`; override the target with
 `VITE_API_PROXY_TARGET` in `.env.local`).
 
-That is why this slice needed no CORS configuration and no change to any Kotlin service. In
-production the same trick is played by **Spring Cloud Gateway**, which will serve these built
-files *and* proxy `/api/**` to the private `user-account` with a Google ID token — one origin,
-so again no CORS. That gateway does not exist yet; it is the next slice.
+That is why this app needed no CORS configuration and no change to any Kotlin service.
 
-**`user-account` is private on Cloud Run** (`Require authentication`), so this app cannot be
-pointed at the deployed service. Local only, for now.
+In production the same trick is played by **`services/gateway`** (Spring Cloud Gateway, servlet
+flavour), which serves these built files *and* forwards `POST /api/hunters` to the private
+`user-account` with a Google ID token — one origin, so again no CORS. Its Docker image builds
+this app and copies `dist/` into the jar, so the page and the API it calls can never be different
+versions of each other.
+
+**`user-account` is private on Cloud Run** (`Require authentication`), so this app can never be
+pointed straight at the deployed service — only at the gateway, or at a local user-account.
+
+Note the gateway's route list is deliberately **one method and one path**. `user-account`'s
+lookup endpoints (`by-email`, `by-inbound-address`, `GET /api/hunters/{id}`) all return a hunter's
+phone number and are *not* proxied, so don't expect them to work from the browser.
 
 ## Gotchas
 
