@@ -601,11 +601,44 @@ longer exist in the repo, but what each slice proved still holds._
     first, the redelivery would have been deduped into silence. And the GoSMS `link` id parsing
     worked on a real send (`id=47098239900`, not `unknown`).
 
+- **Slice 14 (done 2026-10-26, pending review): the inbound-domain mismatch slice 13 left behind,
+  and notification's read timeout.** Two config fixes, no behaviour change beyond them.
+  - **email-ingestion defaulted to a domain nothing mints.** Slice 13 made the recipient match a
+    configured domain instead of a lookup, and email-ingestion's default stayed
+    `in.wildalert.local` — a leftover from the subdomain design the Cloudflare apex catch-all
+    replaced — while user-account mints on `wildalert.local`. On top of that, `compose.yml` handed
+    `INBOUND_EMAIL_DOMAIN` to user-account only. So **the whole local pipeline was silently
+    broken**: no recipient was ever matched, every photo published with none, the webhook still
+    answered 200, and no SMS was ever sent. Prod was unaffected — both cloud revisions carry
+    `wildalert.app` explicitly — which is exactly why nothing noticed. Both defaults are now the
+    same string and compose passes the variable to both services.
+  - **Every existing test passed throughout, and that is the lesson.** The email-ingestion tests
+    take the domain from the same `application.yml` they are validating, so they agreed with a
+    value that agreed with nothing else. `InboundDomainContractTest` now reads the two services'
+    `application.yml` files and `compose.yml` off disk and asserts they use the same variable and
+    the same default — a contract test, not a unit test, because the bug lived *between* the files.
+    It caught one straggler immediately (an uppercase `IN.WILDALERT.LOCAL` fixture a case-sensitive
+    rename had missed).
+  - **notification's read timeout 10s → 25s**, the tunable slice 13 identified from two measured
+    runs: a cold Spring Boot + Flyway + Cloud SQL start takes longer than 10s, so `attempt=1` died
+    on a read timeout every time and the SMS arrived ~24s late on `attempt=2`. 25s stays well
+    inside the 60s ack deadline and the redelivery remains the net. **Opposite call to
+    email-ingestion's**, where a longer timeout was the wrong fix because failure there lost the
+    photo instead of delaying it — the asymmetry is the point.
+  - **Also removed:** `USER_ACCOUNT_BASE_URL` from email-ingestion's compose block, dead since
+    slice 13 deleted its last outbound HTTP call. The `in.wildalert.local` spelling is gone from
+    every service and test fixture; it survives only in `deploy/email-worker/README.md` as history.
+  - **Tests:** 97 Kotlin (24 user-account, 28 email-ingestion, 45 notification) + 34 Python, all
+    green, `contextLoads` included with Postgres up.
+  - **Not deployed, and it does not need to be:** both cloud revisions set the domain explicitly,
+    so the default never applied there. The read-timeout change does need a notification revision
+    to take effect — until then the first alert after idle still pays the wasted attempt.
+
 ## Done — Detection History (Phase 8, taken out of order, 2026-10-26)
 A fifth service, `services/detection-history`: the hunter-facing record of what has been
-photographed, and the first use of **jOOQ**. Built ahead of the rest of Phase 8 because it needs
-nothing from the frontend, needs no cloud access, and shares no files with the other work in
-flight. **Not deployed** — code only.
+photographed, and the first use of **jOOQ**. Built in parallel with the frontend's slice 1 and
+slice 14 above, because it needs nothing from the frontend, needs no cloud access, and shared no
+files with either. **Not deployed** — code only.
 
 What it does: consumes `AnimalRecognized`, stores one row per recognised animal, and serves
 `GET /api/detections` (one hunter's sightings, newest first, species filter, paged) and
@@ -688,11 +721,62 @@ which is a run, not a test.
   `roles/editor`, so its user-account lookups would succeed *by accident* and slice 5's ID-token
   path would never actually be exercised.
 
+## Started early — Phase 8 (frontend)
+- **Slice 1 (written 2026-10-26, NOT yet verified): hunter registration UI.** The product had no
+  front door — every row in `hunter` was inserted by hand or by `curl` — so this is one screen:
+  register, then show the hunter their personal inbound address with setup help. New top-level
+  `web/`: React + TypeScript + Vite + Tailwind v4, **not** a Gradle module, so `./gradlew build`
+  is untouched. Nothing in `services/` was changed.
+  - **It needs no backend change and no CORS, by construction.** The browser calls a same-origin
+    `/api/hunters` and Vite's dev proxy forwards it to `user-account` on :8081. In production the
+    same job falls to **Spring Cloud Gateway**, which will serve the built files *and* proxy
+    `/api/**` to the private `user-account` with an ID token — one origin either way, so the React
+    code is identical and the decision could be deferred. That gateway is the next slice.
+  - **Why an edge is needed at all:** `user-account` is deployed `Require authentication` and
+    serves phone numbers, so a browser cannot reach it and should not be able to. Every
+    `roles/run.invoker` grant on it belongs to a Google service account.
+  - **Shape:** pure logic (E.164/email validation, RFC 9457 error parsing) sits in its own modules
+    so Vitest runs in a plain **node** environment — no jsdom, no DOM-testing library. 400 field
+    errors land on the matching input; a 409 duplicate shows against the email field rather than
+    as a banner; a validation error for a field the form does not render is surfaced instead of
+    dropped, because silently discarding one is how a form becomes inexplicably stuck.
+  - **`types.ts`/`validation.ts` deliberately duplicate `HunterDtos.kt`** (there is no shared
+    schema). Each copy names the other in a comment so the pair is findable.
+  - **Blocked before any verification could run: `npm install` does not work on the Oracle
+    corporate network.** Its web gateway (McAfee, branded *Oracle Secure Web Gateway*) re-signs
+    TLS to `registry.npmjs.org` and sends **only the leaf certificate**; the issuing intermediate
+    is not sent, is in no Windows certificate store, and is not fetchable — the leaf's AIA
+    extension carries only OCSP, no `caIssuers` URL. Node ships its own CA bundle and has no
+    `--use-system-ca` before v22, so it cannot build a chain:
+    `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Adding the `oracle-ztna-root-ca` root via
+    `NODE_EXTRA_CA_CERTS` does **not** fix it — the gap is the intermediate. `npm install` hangs
+    ~15 minutes retrying and writes nothing.
+    - **A misleading symptom, recorded so it doesn't cost an hour twice:** `npm view <pkg>`
+      *succeeds* for anything already in `%LOCALAPPDATA%\npm-cache` and fails only for packages
+      never installed here. It looks package-specific. It isn't — a direct registry request
+      fails for every package, from Node and from PowerShell alike.
+    - **Decided: no TLS bypass.** `npm install` happens from outside the corporate network
+      instead; `node_modules/` and `package-lock.json` then persist, and dev/test/build are all
+      local afterwards.
+  - **Therefore unverified and honestly outstanding:** `npm install`, `npm test`, `npm run build`,
+    the proxy carrying a real registration, and any look at the thing in a browser. Also the two
+    `ProblemDetail` bodies in `problemDetail.test.ts` are written from `GlobalExceptionHandler.kt`
+    and Spring's documented shape, **not captured from a running service** — they are marked as
+    such in the file and must be reconciled against real 400/409 responses. A guessed response
+    shape is exactly what bit us in slice 12.
+  - **Versions:** `vite@^8.2.0` (engines `^20.19.0 || >=22.12.0`; this machine is Node 20.19.5, so
+    exactly at the floor), `react`/`react-dom@^19.2.8`, `@vitejs/plugin-react@^6.0.5`,
+    `typescript@~5.9.3` — deliberately *not* the current `typescript@7.0.2`, the new native
+    compiler, on a learning project. `tailwindcss`/`@tailwindcss/vite@^4` and `vitest@^4` could
+    not be checked (never cached locally, and the registry is unreachable), so those two ranges
+    are the ones to confirm when install first runs.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth).
-- **8 — React frontend.** Its backend half, the detection-history service, is already built
-  (above); what remains is the UI, signup/verification, presigned photo URLs and auth.
+- **8 — React frontend** — slice 1 (registration UI) written, unverified, and the
+  detection-history service behind the eventual dashboard built and tested; both above. Still to
+  do: phone verification, the dashboard itself, presigned photo URLs and auth.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions

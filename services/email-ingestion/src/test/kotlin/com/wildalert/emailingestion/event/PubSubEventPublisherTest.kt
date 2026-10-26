@@ -30,7 +30,7 @@ class PubSubEventPublisherTest {
             storageKey = "inbound/2026/09/15/abc.jpg",
             contentType = "image/jpeg",
             senderEmail = "hunter@example.com",
-            recipient = "7f3k9qabcdef@in.wildalert.local",
+            recipient = "7f3k9qabcdef@wildalert.local",
         )
 
         publisher.publish(event)
@@ -41,7 +41,7 @@ class PubSubEventPublisherTest {
         assertThat(topic.value).isEqualTo("image.received")
         assertThat(payload.value)
             .contains("\"storageKey\":\"inbound/2026/09/15/abc.jpg\"")
-            .contains("\"recipient\":\"7f3k9qabcdef@in.wildalert.local\"")
+            .contains("\"recipient\":\"7f3k9qabcdef@wildalert.local\"")
             .contains(event.eventId.toString())
     }
 

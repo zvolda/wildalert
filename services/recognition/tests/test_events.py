@@ -8,7 +8,7 @@ KOTLIN_IMAGE_RECEIVED = """{
   "storageKey": "inbound/2026/09/15/eba015d1-138e-48fa-a2b2-a228c306def3.png",
   "contentType": "image/png",
   "senderEmail": "hunter@example.com",
-  "recipient": "7f3k9qabcdef@in.wildalert.local",
+  "recipient": "7f3k9qabcdef@wildalert.local",
   "hunterId": null,
   "eventId": "283c0964-622c-4e95-a862-1e24a21fafab",
   "occurredAt": "2026-09-15T10:15:30.123456Z"
@@ -30,7 +30,7 @@ def test_parses_image_received_published_by_kotlin():
     event = ImageReceived.model_validate_json(KOTLIN_IMAGE_RECEIVED)
 
     assert event.storage_key == "inbound/2026/09/15/eba015d1-138e-48fa-a2b2-a228c306def3.png"
-    assert event.recipient == "7f3k9qabcdef@in.wildalert.local"
+    assert event.recipient == "7f3k9qabcdef@wildalert.local"
     assert event.event_id == UUID("283c0964-622c-4e95-a862-1e24a21fafab")
 
 
@@ -56,7 +56,7 @@ def test_unknown_fields_are_ignored_so_producers_can_evolve():
 def test_animal_recognized_is_serialised_with_camel_case_names():
     event = AnimalRecognized(
         source_event_id=UUID("283c0964-622c-4e95-a862-1e24a21fafab"),
-        recipient="7f3k9qabcdef@in.wildalert.local",
+        recipient="7f3k9qabcdef@wildalert.local",
         storage_key="inbound/x.png",
         species="wild boar",
         confidence=0.97,
