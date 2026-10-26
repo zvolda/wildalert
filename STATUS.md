@@ -546,7 +546,7 @@ longer exist in the repo, but what each slice proved still holds._
     already accepted a message must not be made to send it twice over a parsing quibble. Now parsed
     properly, with a test carrying the verbatim response. 42 tests, 0 failures.
 
-- **Slice 13 (code done 2026-10-26, not yet deployed): the cold-start bug is fixed by moving the
+- **Slice 13 (done 2026-10-26, deployed and proven): the cold-start bug is fixed by moving the
   hunter lookup out of the webhook.** The recipient address now travels on the events and
   **notification** resolves it, so a scaled-to-zero user-account costs a Pub/Sub redelivery instead
   of the alert. email-ingestion makes **no calls to user-account at all** any more.
@@ -570,12 +570,35 @@ longer exist in the repo, but what each slice proved still holds._
     kept as a fallback, so an old event in flight (or replayed from a dead-letter topic) still
     reaches its hunter. Tests pin both directions, including a legacy payload. Removing `hunterId`
     is a follow-up.
-  - **`HunterLookupClient`, `UserAccountAuth` and `GcpIdTokenUserAccountAuth` in email-ingestion are
-    now dead code** — left in place for this slice so the change is easy to review and revert;
-    deleting them (and the `run.invoker` grant on user-account) is the next cleanup.
+  - **The dead code is gone (same day).** `HunterLookupClient`, `UserAccountAuth`,
+    `GcpIdTokenUserAccountAuth` and `HunterLookupClientTest` deleted, along with the
+    `services.user-account.*` config and the `spring.http.client` timeouts — **email-ingestion now
+    makes no outbound HTTP calls at all**, so those timeouts guarded nothing. The ID-token work from
+    slice 5 therefore survives only in notification, which is where it was always needed: that
+    service really does call a private user-account. Tests: 26 in email-ingestion (was 35; the nine
+    deleted ones covered the deleted client).
+    **Still to do in the cloud:** clear `USER_ACCOUNT_BASE_URL` / `USER_ACCOUNT_AUTH` from the
+    email-ingestion revision and revoke its `roles/run.invoker` on user-account — it has no use for
+    either now.
   - **Tests:** 104 Kotlin (24 user-account, 35 email-ingestion, 45 notification) + 34 Python, all
     green. The cross-language contract test now carries a payload **generated from `events.py`
     itself** rather than hand-written.
+  - **Deployed and proven against a genuinely cold stack (2026-10-26).** email-ingestion
+    `00003-dd6` (with `INBOUND_EMAIL_DOMAIN=wildalert.app`), recognition `00003-fl9`, notification
+    `00005-qv8`. A photo emailed with nothing warmed:
+    - 09:52:05 stored + published with a `recipient`
+    - 09:53:25 recognition received it after a **73s cold start**; 09:53:31 `wild boar` 1.00
+    - 09:53:45 notification `attempt=1` → **`Read timed out`** on `by-inbound-address`
+      (user-account scaled to zero) → 5xx
+    - 09:54:09 Pub/Sub redelivered, **`attempt=2`** → 09:54:10 **SMS sent** (GoSMS id 47098239900)
+
+    **The failure we were trying to survive actually occurred, and the alert arrived anyway** —
+    24 seconds late instead of lost. Under the old design that same timeout produced a 200, a
+    stored photo and silence. Email to SMS in **2m05s across two cold starts**.
+  - **Two details worth keeping:** the `ProcessedEvents` claim sits *after* the lookup, so the
+    failed attempt never claimed the event and the retry was free to send — had the claim come
+    first, the redelivery would have been deduped into silence. And the GoSMS `link` id parsing
+    worked on a real send (`id=47098239900`, not `unknown`).
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
