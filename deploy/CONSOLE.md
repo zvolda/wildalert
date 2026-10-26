@@ -601,7 +601,6 @@ Phase 7 decision, deliberately not now.
 | Name | Value |
 |---|---|
 | `SPRING_PROFILES_ACTIVE` | `pubsub` |
-| `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` |
 | `INBOUND_EMAIL_DOMAIN` | `wildalert.app` — **required**: it is how this service picks our own address out of an email's recipients. Wrong or unset and every photo is published with no recipient, so nobody is ever texted. |
 | `STORAGE_PROVIDER` | `r2` (or `logging` if you skipped step 10a) |
 | `R2_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` |
@@ -624,9 +623,10 @@ Three variables **not** to set here, each of which breaks something quietly:
 - **`EVENTS_PROVIDER`** — the `pubsub` profile sets it *together with* the GCP auto-configuration it
   needs. Setting the provider on its own gives you a publisher with no client.
 
-`USER_ACCOUNT_BASE_URL` does double duty: it is both the address called and the **audience** of the
-ID token minted for it. Cloud Run rejects a token whose audience is the service's *other* URL, so
-use the same string you verify with, and no trailing slash.
+**This service sets no `USER_ACCOUNT_*` variables at all.** It made its last call to user-account
+before the recipient moved onto the event; the lookup now happens in notification, which is where
+those variables (and the `run.invoker` grant) belong. If a revision here still carries them, they
+are leftovers and can be cleared.
 
 ### Container → Health checks
 
