@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: detection-history
+
+  # Optional local secrets from the git-ignored .env at the repo root.
+  config:
+    import: optional:file:.env[.properties]
+
+  # Only used when history.store=postgres (see PostgresHistoryConfig).
+  datasource:
+    url: ${DATABASE_URL:}
+    username: ${POSTGRES_USER:}
+    password: ${POSTGRES_PASSWORD:}
+
+  # This service owns its own schema; user-account keeps the public one, notification has
+  # `notification`. Separate schemas mean separate Flyway histories, so each service migrates on
+  # its own schedule and no two of them can disagree about one history table.
+  flyway:
+    schemas: detection_history
+    create-schemas: true
+
+server:
+  # Cloud Run injects PORT; locally it falls back to the service's own port. 8085 is the Pub/Sub
+  # emulator, hence 8086.
+  port: ${PORT:8086}
+
+events:
+  # 'none' (default — no push endpoint, the app runs without a broker) or 'pubsub'.
+  # Which topic feeds us is the subscription's business, not ours, so there is no topic setting:
+  # Pub/Sub POSTs to /api/events/animal-recognized and the HTTP status is the acknowledgement.
+  provider: ${EVENTS_PROVIDER:none}
+
+history:
+  # Where detections are kept: 'memory' (fake, default — per-instance, lost on restart) or
+  # 'postgres' (the real one, via jOOQ). Production must be postgres: a history service that
+  # forgets on restart is not one.
+  store: ${HISTORY_STORE:memory}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # Health only. The other endpoints (env, metrics, heapdump) would leak configuration from
+        # a Cloud Run URL, and nothing needs them yet.
+        include: health
+  endpoint:
+    health:
+      # Adds /actuator/health/liveness and /actuator/health/readiness — the probes Cloud Run
+      # calls.
+      probes:
+        enabled: true

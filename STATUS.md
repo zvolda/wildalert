@@ -14,6 +14,7 @@ Kotlin/Spring/microservices.
 Email → [Email Ingestion (Kotlin)] --ImageReceived--> [Pub/Sub]
              → [Recognition (Python/DeepFaune)] --AnimalRecognized--> [Pub/Sub]
                   → [Notification (Kotlin)] → SMS (Twilio)
+                  → [Detection History (Kotlin/jOOQ)] → Postgres   [2nd subscription, fan-out]
         [User/Account (Kotlin)] — email→phone mapping, shared Postgres
 ```
 
@@ -600,6 +601,76 @@ longer exist in the repo, but what each slice proved still holds._
     first, the redelivery would have been deduped into silence. And the GoSMS `link` id parsing
     worked on a real send (`id=47098239900`, not `unknown`).
 
+## Done — Detection History (Phase 8, taken out of order, 2026-10-26)
+A fifth service, `services/detection-history`: the hunter-facing record of what has been
+photographed, and the first use of **jOOQ**. Built ahead of the rest of Phase 8 because it needs
+nothing from the frontend, needs no cloud access, and shares no files with the other work in
+flight. **Not deployed** — code only.
+
+What it does: consumes `AnimalRecognized`, stores one row per recognised animal, and serves
+`GET /api/detections` (one hunter's sightings, newest first, species filter, paged) and
+`GET /api/detections/summary` (per-species counts, last seen, average confidence).
+
+The decisions worth remembering:
+- **A second push subscription on `animal.recognized`, not a change to notification.** This is
+  fan-out, and the first time the broker earns its keep beyond decoupling: each consumer gets its
+  own copy and acks independently, so detection-history can be down, slow or redeploying without
+  delaying an SMS, and neither consumer knows the other exists. `compose.yml` now provisions
+  `animal.recognized.history` alongside `animal.recognized.notification` (5 subscriptions).
+- **Attributed by `recipient`, not by hunter id — so no synchronous call to user-account.**
+  Notification has to call it (it needs the phone number); this service needs only an identity,
+  and the event already carries one. A cold-starting user-account may delay an SMS, but it must
+  never be able to lose history. The recipient→hunter mapping stays in user-account, which the
+  frontend already queries.
+- **Idempotency is the primary key.** `source_event_id` is the PK and inserts use
+  `on conflict do nothing`. Notification needs a separate claim/release table because sending an
+  SMS is an effect *outside* the database; here the write *is* the effect, so one statement covers
+  at-least-once delivery with no race.
+- **jOOQ codegen from the Flyway SQL, no database.** `DDLDatabase` replays
+  `db/migration/*.sql` into in-memory H2 and generates from that, wired as a plain `JavaExec`
+  (`generateJooq`, automatic before `compileKotlin`) rather than a jOOQ Gradle plugin. So the
+  build needs no Postgres — which matters on this machine — and renaming a column in SQL breaks
+  the Kotlin at compile time. The cost: the migration must be spelled so H2 can parse it too, so
+  `timestamp with time zone` not `timestamptz`, `varchar(n)` not `text`.
+- **A legacy event carrying only `hunterId`** (a replay from before the recipient switch) is
+  stored rather than dead-lettered, behind a check constraint requiring one owner column or the
+  other. It will not appear in a recipient-keyed read; keeping the row costs nothing, and
+  resolving the id back to an address would need exactly the user-account call avoided above.
+- **An event naming no owner at all gets a 400, not a 500** — retrying cannot add a hunter to it,
+  so it goes straight to the dead-letter topic. A database failure is deliberately *not* caught
+  and surfaces as 500 so Pub/Sub redelivers.
+
+Verification: **44 tests, all passing, no infrastructure** —
+`./gradlew :services:detection-history:test`. Including `JooqDetectionStoreSqlTest`, which renders
+the real Postgres SQL from a connection-less `DSLContext` and asserts the things that quietly break
+a reporting endpoint (schema qualification, `order by occurred_at desc`, the `group by`,
+`on conflict do nothing`). It caught one wrong assumption already: jOOQ renders paging as the SQL
+standard `offset … rows fetch next … rows only`, not Postgres's `limit/offset`.
+
+Two things it taught about the toolchain, both now written down in the code:
+- jOOQ's XML config rejects `--` inside an XML comment, which is easy to type in prose.
+- Mockito's `eq()`/`capture()` return null, and Kotlin inserts a **caller-side** null check when a
+  non-null parameter of a *Kotlin* function gets a nullable expression — so
+  `verify(service).summary(eq(x), captor.capture())` throws `eq(...) must not be null` before
+  Mockito is consulted. Mocks of Java types never hit this. Helpers in `DetectionControllerTest`
+  substitute a non-null placeholder for the discarded return value.
+
+Still open for this service: deploy (needs a `wildalert-detection-history` service account, the
+real push subscription, and `HISTORY_STORE=postgres` + Cloud SQL); presigned photo URLs so the
+dashboard can show the images (`storage_key` is stored, the bucket stays private); and **auth
+before the read API is exposed** — the inbound address is currently the only thing identifying a
+hunter and it travels as a query parameter, so this service must not get a public,
+unauthenticated Cloud Run URL.
+
+The migration **was** checked against a real Postgres 17 (a throwaway container, one WSL2
+session): the DDL applies, a duplicate `source_event_id` insert is absorbed by
+`on conflict do nothing`, the check constraint rejects a row owned by nobody, the index is
+created, and the per-species aggregate returns `avg_conf 0.75` — the same number
+`InMemoryDetectionStoreTest` expects, so the fake and the database agree. What is still unproven
+is the service *running* on Postgres end to end: Flyway on startup, and jOOQ executing (rather
+than just rendering) the queries. That needs `HISTORY_STORE=postgres` against a live database,
+which is a run, not a test.
+
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
   publishes; a push subscription needs a URL to push *to*): the two authenticated **push**
@@ -620,7 +691,8 @@ longer exist in the repo, but what each slice proved still holds._
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth).
-- **8 — React frontend.**
+- **8 — React frontend.** Its backend half, the detection-history service, is already built
+  (above); what remains is the UI, signup/verification, presigned photo URLs and auth.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions

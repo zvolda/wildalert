@@ -11,6 +11,7 @@ Event-driven microservices: Kotlin/Spring Boot + one Python recognition service.
 Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
            → recognition (Python/DeepFaune) --AnimalRecognized--> Pub/Sub
                 → notification (Kotlin) → SMS (Twilio)
+                → detection-history (Kotlin/jOOQ) → Postgres   [second subscription, fan-out]
      user-account (Kotlin) — email→phone mapping, shared Postgres
 ```
 
@@ -46,6 +47,10 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
   - The real DeepFaune model runs only in the Docker image
     (`docker build -t wildalert-recognition services/recognition`); it needs Python 3.12
     (torch has no 3.14 wheels) and is enabled by `RECOGNITION_CLASSIFIER=deepfaune`.
+- **jOOQ (detection-history only):** the generated tables come from the Flyway migrations via
+  `DDLDatabase` (replayed into in-memory H2), so **no database is needed to build**. `generateJooq`
+  runs automatically before `compileKotlin`; change a migration and the Kotlin referencing that
+  column stops compiling. `JooqDetectionStoreSqlTest` asserts the rendered SQL with no connection.
 - **Local infra:** `docker compose up -d` (Postgres + the Pub/Sub emulator, topics and
   subscriptions included). Docker Engine runs in WSL2 (no Docker Desktop). Because the emulator
   pushes over HTTP, run the services in that same WSL2 session and bind uvicorn to `0.0.0.0`.

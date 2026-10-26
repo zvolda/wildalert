@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  jOOQ code generation config, run by the `generateJooq` task in build.gradle.kts.
+
+  The important line is the <name> below: DDLDatabase, not a JDBC connection. jOOQ replays the
+  Flyway migrations into an in-memory H2 database and generates from the result, so building this
+  module needs no Postgres running anywhere.
+
+  Paths are relative to the module directory (the task sets workingDir).
+-->
+<configuration xmlns="http://www.jooq.org/xsd/jooq-codegen-3.19.0.xsd">
+    <generator>
+        <database>
+            <name>org.jooq.meta.extensions.ddl.DDLDatabase</name>
+            <properties>
+                <property>
+                    <key>scripts</key>
+                    <value>src/main/resources/db/migration/*.sql</value>
+                </property>
+                <!-- Apply the migrations in Flyway's version order, the same order Postgres sees. -->
+                <property>
+                    <key>sort</key>
+                    <value>flyway</value>
+                </property>
+                <!-- H2 upper-cases unquoted identifiers; Postgres lower-cases them. Without this
+                     the generated code would say DETECTION_HISTORY.DETECTION and the SQL sent to
+                     Postgres would be quoted wrong. -->
+                <property>
+                    <key>defaultNameCase</key>
+                    <value>lower</value>
+                </property>
+            </properties>
+            <!-- Only our own schema: skip H2's INFORMATION_SCHEMA and anything else it defines. -->
+            <inputSchema>detection_history</inputSchema>
+            <includes>.*</includes>
+        </database>
+        <generate>
+            <!-- OffsetDateTime/LocalDate rather than java.sql.Timestamp. -->
+            <javaTimeTypes>true</javaTimeTypes>
+            <!-- Tables and columns only. The domain type is hand-written Kotlin (Detection.kt);
+                 generated POJOs/DAOs would duplicate it and drag persistence shapes into the API. -->
+            <pojos>false</pojos>
+            <daos>false</daos>
+            <deprecated>false</deprecated>
+        </generate>
+        <target>
+            <packageName>com.wildalert.detectionhistory.jooq</packageName>
+            <directory>build/generated/jooq</directory>
+        </target>
+    </generator>
+</configuration>
