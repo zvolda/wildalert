@@ -1,0 +1,42 @@
+/*
+ * Tailwind v4. Note what is NOT here: there is no tailwind.config.js and no PostCSS config.
+ * v4 moved configuration into CSS, and the build is wired up by the @tailwindcss/vite plugin
+ * in vite.config.ts. Most tutorials still show the v3 arrangement -- if one tells you to create
+ * a config file, it is out of date.
+ */
+@import 'tailwindcss';
+
+/*
+ * @theme declares design tokens, and every token becomes utility classes automatically:
+ * --color-moss-600 gives bg-moss-600, text-moss-600, ring-moss-600, border-moss-600, ...
+ * A muted forest green, because that is the context the app is used in.
+ */
+@theme {
+  --color-moss-50: #f3f7ed;
+  --color-moss-100: #e4eeda;
+  --color-moss-200: #cadfb8;
+  --color-moss-400: #8bb562;
+  --color-moss-600: #4f7a2a;
+  --color-moss-700: #3f6212;
+  --color-moss-800: #334e12;
+  --color-moss-950: #1a2a08;
+
+  --font-mono:
+    ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono',
+    monospace;
+}
+
+/*
+ * Dark mode needs no configuration in v4 -- the `dark:` variant follows prefers-color-scheme
+ * out of the box. This only sets the page backdrop, which sits behind the React root and so
+ * cannot be expressed as a utility class on a component.
+ */
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100;
+  }
+}

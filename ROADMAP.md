@@ -312,10 +312,29 @@ then the async flow, then deploy, then scale.
 ### Phase 8 — React Frontend (later)
 - **Goal / learn:** React + talking to your Kotlin API.
 - **Deliverable:** a hunter-facing web app.
+- **Stack decided 2026-10-26** (slice 1 started early, while Phase 6's remainder is console work):
+  - **React + TypeScript, built with Vite**, in `web/` — not a Gradle module. Vite is the build
+    tool only and is never deployed; it emits static files.
+  - **No SSR / Next.js for now.** SSR buys first paint, no-JS support and SEO, and a registration
+    form gains none of the three. It would also make the token-holding API edge JavaScript, which
+    cuts against this project's Kotlin goal. Revisit if a public, indexable marketing page is
+    wanted, or at the dashboard, where routing and data loading get heavy.
+  - **Tailwind CSS v4** for styling (configured in CSS — no `tailwind.config.js` in v4).
+  - **Vitest** in a plain node environment; the testable logic stays in pure modules so no jsdom
+    or DOM-testing library is needed.
+  - **Production edge = Spring Cloud Gateway serving both the UI and the API** (its own slice,
+    not yet built). It serves the built static files *and* proxies `/api/**` to the private
+    `user-account` with a Google ID token. One origin, so **no CORS anywhere** and no second
+    hosting product — and it cashes in the Spring Cloud Gateway learning target above. Until it
+    exists the app runs locally only, against `user-account` on :8081 through Vite's dev proxy.
+    Nothing in the React code differs between the two, which is why deferring it cost nothing.
+  - **Why the edge is needed at all:** `user-account` is deployed `Require authentication` and
+    serves hunters' phone numbers, so a browser cannot call it directly and should not be able to.
 - **Tasks:**
   - [ ] Hunter signup + phone verification
-  - [ ] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
-        or entering it directly in the camera app)
+        — *signup form built in slice 1 (`web/`); phone verification still to do*
+  - [x] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
+        or entering it directly in the camera app) — slice 1, shown right after registering
   - [ ] **Detection History service** (Kotlin/Spring Boot + Postgres): consume
         `AnimalRecognized`, store detections; reporting queries with **jOOQ** (codegen via
         `DDLDatabase` from Flyway SQL)
