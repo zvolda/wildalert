@@ -618,7 +618,8 @@ longer exist in the repo, but what each slice proved still holds._
   path would never actually be exercised.
 
 ## Started early — Phase 8 (frontend)
-- **Slice 1 (written 2026-10-26, NOT yet verified): hunter registration UI.** The product had no
+- **Slice 1 (2026-10-26, verified in Cloud Build; browser check still outstanding): hunter
+  registration UI.** The product had no
   front door — every row in `hunter` was inserted by hand or by `curl` — so this is one screen:
   register, then show the hunter their personal inbound address with setup help. New top-level
   `web/`: React + TypeScript + Vite + Tailwind v4, **not** a Gradle module, so `./gradlew build`
@@ -651,21 +652,38 @@ longer exist in the repo, but what each slice proved still holds._
       *succeeds* for anything already in `%LOCALAPPDATA%\npm-cache` and fails only for packages
       never installed here. It looks package-specific. It isn't — a direct registry request
       fails for every package, from Node and from PowerShell alike.
-    - **Decided: no TLS bypass.** `npm install` happens from outside the corporate network
-      instead; `node_modules/` and `package-lock.json` then persist, and dev/test/build are all
-      local afterwards.
-  - **Therefore unverified and honestly outstanding:** `npm install`, `npm test`, `npm run build`,
-    the proxy carrying a real registration, and any look at the thing in a browser. Also the two
-    `ProblemDetail` bodies in `problemDetail.test.ts` are written from `GlobalExceptionHandler.kt`
-    and Spring's documented shape, **not captured from a running service** — they are marked as
-    such in the file and must be reconciled against real 400/409 responses. A guessed response
-    shape is exactly what bit us in slice 12.
-  - **Versions:** `vite@^8.2.0` (engines `^20.19.0 || >=22.12.0`; this machine is Node 20.19.5, so
-    exactly at the floor), `react`/`react-dom@^19.2.8`, `@vitejs/plugin-react@^6.0.5`,
-    `typescript@~5.9.3` — deliberately *not* the current `typescript@7.0.2`, the new native
-    compiler, on a learning project. `tailwindcss`/`@tailwindcss/vite@^4` and `vitest@^4` could
-    not be checked (never cached locally, and the registry is unreachable), so those two ranges
-    are the ones to confirm when install first runs.
+    - **Decided: no TLS bypass.** Verification was moved to **Cloud Build** instead, where the
+      registry is reachable: `deploy/cloudbuild-web.yaml`, submitted with
+      `gcloud builds submit web --config deploy/cloudbuild-web.yaml`. It installs, runs the
+      tests and runs the real build; nothing is deployed and no image is pushed — the exit code
+      is the point. Local `npm run dev` still needs one install from a non-blocked network.
+- **Verified in Cloud Build (build `fcf102dd`, 43s, 2026-10-26):** install clean (58 packages),
+  **`tsc --noEmit` with no type errors**, **20 tests passing** in 2 files, and a real production
+  build — 22 modules → `dist/` with 229.32 kB JS (72.01 kB gzipped) and 17.54 kB CSS. That the
+  CSS is 17.5 kB rather than near-empty is the evidence Tailwind v4 is actually wired up.
+  - **Resolved versions** (the ranges in `package.json` were corrected to these afterwards):
+    `vite@8.3.5`, `vitest@5.0.5`, `tailwindcss`/`@tailwindcss/vite@4.3.3`,
+    `@vitejs/plugin-react@6.1.2`, `react`/`react-dom@19.3.1`, `@types/react`/`@types/react-dom@19.3.0`,
+    `typescript@5.9.3`. TypeScript is held at 5.9 deliberately — the current `typescript@7.0.2` is
+    the new native compiler, not a change to take on a learning project mid-slice. Two of the
+    guesses made offline were wrong and are now fixed: **vitest was a whole major behind** (4 vs
+    5.0.5) and vite had moved 8.2.0 → 8.3.5.
+  - **A trap worth recording: the npm bundled with `node:22` (10.9.9) cannot install this
+    project at all.** It throws `Cannot read properties of null (reading 'edgesOut')` from
+    arborist's own `#loadPeerSet` while walking **vitest's optional peer dependencies**
+    (`@vitest/*`, `jsdom`, `happy-dom`, then `canvas`). It is an npm bug, not a bad
+    `package.json` — the error names nothing useful and looks like a broken manifest. Upgrading
+    to npm 12.2.1 in the build step fixes it outright; `--legacy-peer-deps` would too.
+  - **Still outstanding:** the dev proxy carrying a real registration against a running
+    `user-account`, and any look at the UI in a browser — neither is possible in Cloud Build.
+    Also the two `ProblemDetail` bodies in `problemDetail.test.ts` are written from
+    `GlobalExceptionHandler.kt` and Spring's documented shape, **not captured from a running
+    service**; they are marked as such in the file and must be reconciled against real 400/409
+    responses. A guessed response shape is exactly what bit us in slice 12. The 20 green tests
+    prove the parsing logic is self-consistent, not that the server sends that shape.
+  - **No `package-lock.json` yet**, because it is generated inside the build and nothing brings
+    it back. Until one is committed the build uses `npm install`, so dependency resolution is
+    not reproducible; switching to `npm ci` is a follow-up.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
