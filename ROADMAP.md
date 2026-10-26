@@ -85,7 +85,7 @@ Key realities established during planning:
 | **Cloud Run functions** (formerly Cloud Functions) | Good fit for small event/scheduled jobs: daily digest SMS, old-image cleanup. | Phase 7 |
 | **GKE** | Weak fit for prod (overkill + idle cost for 4 services). Learn deliberately: local `kind`/`k3s` in WSL2, then a short-lived GKE Autopilot deploy that is torn down. | Phase 9 |
 | **Spring Cloud GCP** | In use for publishing (`PubSubTemplate` in email-ingestion). Note its auto-configuration eagerly demands Application Default Credentials, so it is gated behind the `pubsub` profile — see `PubSubCredentialsConfig`. | Phase 6 |
-| **Spring Cloud** (the umbrella — *not* Spring Cloud GCP) | Deliberate learning track, each item replacing something already hand-written, which is the point: you know what it abstracts. **OpenFeign** instead of the `RestClient` in `HunterLookupClient`/`HunterClient`; **Resilience4j** for the retry/timeout written by hand there (and it adds a circuit breaker we don't have); **Spring Cloud Gateway** in front of the services for the frontend; optionally **Spring Cloud Stream** — but its Pub/Sub binder is streaming-**pull**, so a service using it cannot scale to zero (min-instances=1), which is why the push design was chosen instead. | Phase 7, 8 |
+| **Spring Cloud** (the umbrella — *not* Spring Cloud GCP) | Deliberate learning track, each item replacing something already hand-written, which is the point: you know what it abstracts. **OpenFeign** instead of the `RestClient` in `HunterLookupClient`/`HunterClient`; **Resilience4j** for the retry/timeout written by hand there (and it adds a circuit breaker we don't have); **Spring Cloud Gateway** — **done, `services/gateway`**: the public edge that serves the React app and forwards `POST /api/hunters` to the private user-account with an ID token. Built on the **servlet** flavour (`spring-cloud-starter-gateway-server-webmvc`), not the reactive default, so it matches the rest of the project's stack; optionally **Spring Cloud Stream** — but its Pub/Sub binder is streaming-**pull**, so a service using it cannot scale to zero (min-instances=1), which is why the push design was chosen instead. | Phase 7, 8 |
 
 ---
 
@@ -322,7 +322,7 @@ then the async flow, then deploy, then scale.
   - **Tailwind CSS v4** for styling (configured in CSS — no `tailwind.config.js` in v4).
   - **Vitest** in a plain node environment; the testable logic stays in pure modules so no jsdom
     or DOM-testing library is needed.
-  - **Production edge = Spring Cloud Gateway serving both the UI and the API** (its own slice,
+  - **Production edge = Spring Cloud Gateway serving both the UI and the API** (**built**, slice 2;
     not yet built). It serves the built static files *and* proxies `/api/**` to the private
     `user-account` with a Google ID token. One origin, so **no CORS anywhere** and no second
     hosting product — and it cashes in the Spring Cloud Gateway learning target above. Until it

@@ -11,14 +11,18 @@ service.
 
 ```
 services/
-  user-account/     # Kotlin/Spring Boot — hunters, email→phone mapping
-  notification/     # Kotlin/Spring Boot — sends SMS via Twilio
-  email-ingestion/  # Kotlin/Spring Boot — parse email, store image, emit ImageReceived
-  recognition/      # Python/FastAPI — classifies the animal (DeepFaune)
-compose.yml         # local dev infra: Postgres + Cloud Pub/Sub emulator
+  user-account/      # Kotlin/Spring Boot — hunters, email→phone mapping
+  notification/      # Kotlin/Spring Boot — sends SMS via Twilio
+  email-ingestion/   # Kotlin/Spring Boot — parse email, store image, emit ImageReceived
+  detection-history/ # Kotlin/Spring Boot + jOOQ — stores detections, reporting queries
+  gateway/           # Kotlin/Spring Cloud Gateway — public front door: serves the UI, proxies the API
+  recognition/       # Python/FastAPI — classifies the animal (DeepFaune)
+web/                 # React + TypeScript (Vite) — the hunter-facing app
+compose.yml          # local dev infra: Postgres + Cloud Pub/Sub emulator
 ```
 
-The recognition service (Python + DeepFaune) lives outside the Gradle build.
+The recognition service (Python + DeepFaune) and the web app (React + Vite) both live outside the
+Gradle build.
 
 ## Prerequisites
 

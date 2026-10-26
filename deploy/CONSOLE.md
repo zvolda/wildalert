@@ -883,6 +883,80 @@ logs will settle whether the fallback would ever have worked.
 
 ---
 
+## Step 10h — Deploy gateway to Cloud Run (the UI's front door)
+
+The second public service, and the only one a browser talks to. It serves the built React app out
+of its own jar and forwards exactly one call — `POST /api/hunters` — to the private user-account
+with a Google ID token.
+
+> **Read this before deploying.** Until now, open registration was a *theoretical* risk: the
+> register endpoint was unauthenticated and unthrottled, but nothing was publicly reachable, so
+> the decision was deliberately deferred (see STATUS.md). **This deploy is what makes it real.**
+> Once the gateway is live, anyone can create hunters at will — each one a row in Cloud SQL and a
+> future SMS cost. `max-instances` is a spend cap, not a rate limit. If this is going to sit on the
+> public internet for more than a test, add Cloudflare Turnstile to the form (free, and the account
+> is already on Cloudflare) or put it behind Cloudflare with a rate-limiting rule first.
+
+**First: the service account.** It does not exist yet — the ones that do are user-account,
+email-ingestion, recognition, notification and pubsub-push. Create `wildalert-gateway` *before*
+deploying. Without it the service inherits the default compute service account, which still holds
+`roles/editor` — so its user-account calls would succeed **by accident** and the ID-token path
+would never actually be exercised. Exactly the trap notification hit.
+
+**Build the image** (context is the repo root — the Dockerfile runs both npm and Gradle):
+
+```
+gcloud builds submit --config deploy/cloudbuild.yaml --substitutions=\
+_SERVICE=gateway,_IMAGE_BASE=europe-west3-docker.pkg.dev/wildalert-prod/wildalert/gateway,\
+SHORT_SHA=$(git rev-parse --short HEAD) .
+```
+
+This is the slowest image here: it installs npm packages and builds the React app, *then* runs
+Gradle. A type error or a failing Vitest test fails the image build rather than shipping — `npm run
+build` runs `tsc --noEmit` first, deliberately.
+
+**Navigation:** Cloud Run → **Deploy container** → **Service**
+
+| Field | Value | Why |
+|---|---|---|
+| Container image | `…/wildalert/gateway:<sha>` | |
+| Service name | `gateway`, region `europe-west3` | |
+| Authentication | **Allow unauthenticated** | a browser has no Google token; this is the public edge. The *second* service set this way, and the last |
+| Ingress | **All** | |
+| Memory | **512 MiB** | serves static files and proxies one call; no model, no DB pool |
+| CPU | **1** | |
+| Concurrency | default **80** | it is I/O-bound |
+| Request timeout | **30s** | a registration that takes longer has failed |
+| Auto-scaling | min **0**, max **2** | caps spend. Startup is fast: **1 second** to health-200 in a container on a Cloud Build worker, measured — it loads no model and opens no database pool. Cloud Run adds image-pull time on top |
+| Startup probe | HTTP `/actuator/health/liveness` | |
+| Readiness probe | HTTP `/actuator/health/readiness` | no database, so readiness is just "started" |
+| Service account | `wildalert-gateway@…` | created above |
+
+| Env | Value | Why |
+|---|---|---|
+| `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` | also the ID token's **audience**, so no trailing path |
+| `USER_ACCOUNT_AUTH` | `gcp-id-token` | without it the gateway sends no credential and **every registration 403s** |
+
+No secrets. The gateway holds none — it has no database, no SMS account and no R2 keys.
+
+**The one grant it needs:** `roles/run.invoker` on **user-account** for `wildalert-gateway`
+(Cloud Run → user-account → Permissions). Nothing else; notably *not* project-level anything.
+
+**Verify, in this order:**
+1. `curl -s -o /dev/null -w '%{http_code}' <gateway-url>/actuator/health` → **200**, with no token
+   (it is public now).
+2. Open the gateway URL in a browser → the registration form, not a 404. A 404 means the
+   `web/dist` copy in the Dockerfile did not land; there is deliberately no placeholder
+   `index.html` in the repo to mask that.
+3. `curl <gateway-url>/api/hunters/by-email?email=x` → **404 from the gateway**, and *nothing* in
+   user-account's logs. That is the allowlist working: the lookup endpoints return phone numbers
+   and are not proxied.
+4. Register a hunter through the form. Then check user-account's logs — the request should arrive
+   there, which proves the ID token was accepted. A **403** in the gateway's logs means
+   `USER_ACCOUNT_AUTH` is unset or the invoker grant is missing.
+
+---
+
 ## Step 11 — Pub/Sub (for the event-driven services, not user-account)
 
 Not needed to run `user-account`, which is plain HTTP. Do this when email-ingestion, recognition and

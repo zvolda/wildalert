@@ -8,5 +8,10 @@
 .kotlin/
 **/build/
 data/
+# The web app's installed packages and build output: the gateway image builds both itself from
+# web/package-lock.json, and node_modules is large and platform-specific (native esbuild/rollup
+# binaries for the host OS, useless in a Linux image).
+web/node_modules/
+web/dist/
 # Python service has its own image and build context (services/recognition).
 services/recognition/

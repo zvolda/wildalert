@@ -804,16 +804,99 @@ which is a run, not a test.
     service**; they are marked as such in the file and must be reconciled against real 400/409
     responses. A guessed response shape is exactly what bit us in slice 12. The 20 green tests
     prove the parsing logic is self-consistent, not that the server sends that shape.
-  - **No `package-lock.json` yet**, because it is generated inside the build and nothing brings
-    it back. Until one is committed the build uses `npm install`, so dependency resolution is
-    not reproducible; switching to `npm ci` is a follow-up.
+  - ~~No `package-lock.json` yet~~ — **done in slice 2 below.** It is generated in Cloud Build and
+    published as a build artifact, because it cannot be produced on the dev machine at all.
+
+- **Slice 2 (2026-10-26, built and tested; not deployed): the gateway — a public front door for
+  the UI.** `services/gateway`, a new Gradle module. It serves the built React app out of its own
+  jar and forwards exactly one call to the private user-account, carrying a Google ID token. This
+  is what makes slice 1's form reachable by an actual hunter, and it cashes in the **Spring Cloud
+  Gateway** learning target.
+  - **The servlet flavour, not the reactive default:** `spring-cloud-starter-gateway-server-webmvc`
+    (Spring Cloud **2025.0.3**, the train that pairs with Boot 3.5.x). Every other service here is
+    servlet Spring MVC, this one serves static files — which is the plain-MVC path — and the
+    ID-token code it reuses from notification is written against `RestClient`, which is what
+    Gateway MVC proxies with. The reactive gateway would have dragged in WebFlux and a second
+    mental model for nothing at this size.
+  - **The route list *is* the security model, and it is one method and one path.** user-account
+    exposes `GET /api/hunters/{id}`, `by-email` and `by-inbound-address`, and **every one of them
+    returns a hunter's phone number**. A convenient wildcard route under `/api/hunters` would have
+    published all three to anyone who guessed the URL. Only `POST /api/hunters` is proxied;
+    everything else 404s from the gateway and never reaches user-account. Two tests pin that,
+    including asserting the stub upstream received *nothing*. Opening more routes needs
+    authentication first (Phase 9): a hunter should see their own record, which means knowing who
+    is asking.
+  - **Serving the UI from the same service is what deletes CORS from the problem.** One origin for
+    the page and the API — the same arrangement Vite's dev proxy fakes locally. There is still no
+    CORS configuration anywhere in the repo, which was the point.
+  - **The Dockerfile is the only one here with two toolchains**: a `node:22` stage runs `npm ci`
+    and `npm run build`, and the result is copied into the Gradle module's resources *before*
+    `bootJar`, so the static files end up inside the jar. One artifact, one deploy, and no way for
+    the page and the API it calls to be different versions of each other. `npm run build` runs
+    `tsc --noEmit` first, so a type error fails the image build instead of shipping.
+  - **`classpath:/static/` is deliberately empty in the repo.** No placeholder `index.html`: if the
+    copy ever failed, a 404 is an unambiguous signal, where a stub page would look like a working
+    deploy serving the wrong thing.
+  - **Verified:** `:services:gateway:build` green — **7 tests**, 0 failures, no compiler warnings.
+    Proxying is tested for real against a JDK `HttpServer` stub standing in for user-account (a
+    request leaves the JVM over HTTP and comes back), so it needs no Postgres, no real
+    user-account and no extra test dependency. Full-repo `./gradlew build` also green: **148
+    Kotlin tests across 33 classes, 0 failures**, so nothing regressed.
+  - **The image was built *and run* in Cloud Build (`66cab5e5`, 2m10s, nothing pushed).** Building
+    it is not evidence that the UI got inside the jar, so the container was started and curled:
+    - health **200 after 1 second** — it loads no model and opens no database pool
+    - `GET /` → **200**, and the HTML references its hashed bundles
+    - `/assets/index-Ba2nHyTl.css` and `/assets/index-_0uauuI-.js` → **200 each**. Those are the
+      same filenames the web-only build produced, so that exact `dist/` is in the jar
+    - all three lookup endpoints → **404**, so the allowlist holds at runtime and not just in a
+      unit test
+    - `POST /api/hunters` → **500** against a deliberately unreachable upstream, with a connect
+      exception in the logs: the route exists and tried to forward. A 404 there would have meant
+      it was never wired up
+    - **An earlier version of this check proved nothing and still passed**, which is worth
+      recording: it ran `unzip -l` inside the JRE image, where `unzip` does not exist, and the
+      failure was swallowed because the exit status came from the `head` at the end of the
+      pipeline. `set -o pipefail` in the outer shell does not reach inside `sh -c`.
+  - **Known rough edge:** an unreachable user-account surfaces as a **500**, not a 503. The
+    `IdTokenUnavailableException` path is mapped, but Gateway MVC's own connect failure is not.
+    Worth mapping so the browser can honestly offer a retry.
+  - **Two traps this cost, both now in `AGENTS.md`:**
+    - **Kotlin block comments nest.** Writing an API path with a wildcard in a KDoc comment puts a
+      `/` directly before a `*`, which opens a nested comment that never closes. The build fails
+      with "Unclosed comment" pointing at the *end* of the file, which tells you nothing.
+    - **A Kotlin default parameter value on a `@Configuration` class breaks CGLIB.**
+      `No default constructor found` for `ApiRoutes$$SpringCGLIB$$0`, at context startup. Fixed
+      with `proxyBeanMethods = false`, which is also simply correct here — the class declares one
+      `@Bean` and calls no other.
+  - **`package-lock.json` now exists and the web build uses `npm ci`.** It was generated in Cloud
+    Build and published as an artifact (105 packages, lockfileVersion 3), because the dev machine
+    cannot reach the registry at all. `npm install --package-lock-only` does *not* work for this:
+    npm 12 refuses it with `EALLOWREMOTE`, because `@tailwindcss/oxide-wasm32-wasi` is specified as
+    a remote tarball URL. A full install takes ~7s anyway.
+  - **Deploy steps written** as `CONSOLE.md` **step 10h**, not executed. It needs a service account
+    that does not exist yet (`wildalert-gateway`) — create it *before* deploying, or the service
+    inherits the default compute account, which still holds `roles/editor`, so its user-account
+    calls would succeed **by accident** and the ID-token path would never be exercised. That is
+    exactly the trap notification hit in slice 11.
+  - **Deploying this changes the open-registration risk from theoretical to real.** The decision to
+    defer that fix rested on nothing being publicly reachable. The gateway is the second public
+    service (email-ingestion is the other), so once it is live anyone can create hunters at will —
+    each a Cloud SQL row and a future SMS cost, and `max-instances` is a spend cap, not a rate
+    limit. Add Cloudflare Turnstile to the form, or front it with a Cloudflare rate-limiting rule,
+    before it sits on the internet for longer than a test. Flagged at the top of step 10h too.
+  - **Still outstanding, unchanged from slice 1:** nobody has seen the UI in a browser, the dev
+    proxy has never carried a real registration, and the two `ProblemDetail` bodies in the web
+    tests are still inferred rather than captured. All three need `node_modules` on a machine that
+    can also reach Postgres — i.e. one install from a non-blocked network.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
-  admin auth).
-- **8 — React frontend** — slice 1 (registration UI) written, unverified, and the
-  detection-history service behind the eventual dashboard built and tested; both above. Still to
-  do: phone verification, the dashboard itself, presigned photo URLs and auth.
+  admin auth). **Registration abuse control now belongs here and is no longer optional** once the
+  gateway deploys — see slice 2.
+- **8 — React frontend** — slice 1 (registration UI) and slice 2 (the gateway that serves it)
+  built and tested, plus the detection-history service behind the eventual dashboard; all above.
+  Still to do: deploy the gateway, see the UI in a browser, phone verification, the dashboard
+  itself, presigned photo URLs and auth.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions

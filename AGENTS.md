@@ -13,6 +13,10 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
                 → notification (Kotlin) → SMS (Twilio)
                 → detection-history (Kotlin/jOOQ) → Postgres   [second subscription, fan-out]
      user-account (Kotlin) — email→phone mapping, shared Postgres
+
+Browser → gateway (Kotlin/Spring Cloud Gateway, the ONLY public service for the UI)
+             ├─ serves the built React app (web/) from its own jar
+             └─ POST /api/hunters --+ Google ID token--> user-account (private)
 ```
 
 ## How we work
@@ -63,6 +67,19 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
     cloud instead: `gcloud builds submit web --config deploy/cloudbuild-web.yaml`, which installs,
     tests and builds on a `node:22` worker and deploys nothing. Note that config has to upgrade
     npm first — the npm bundled with `node:22` crashes on vitest's optional peer graph.
+- **Gateway** (`services/gateway`) — the public front door: serves the built React app and
+  forwards `POST /api/hunters` to the private user-account with a Google ID token.
+  - `./gradlew :services:gateway:test` — proxying is tested against a JDK `HttpServer` stub, so
+    no Postgres and no real user-account are needed.
+  - **Its route list is the security model.** user-account's lookup endpoints all return a
+    hunter's phone number, so only the exact register call is proxied — never a wildcard. Adding
+    routes needs authentication first (Phase 9). See `ApiRoutes.kt`.
+  - `classpath:/static/` is **empty in the repo on purpose**; the Dockerfile copies `web/dist`
+    into it at image build time. Locally, run the UI with Vite instead — `GET /` on the gateway
+    is a 404 there, and that is the intended signal if a copy ever fails.
+  - Kotlin block comments **nest**, so a `/` immediately followed by `*` inside a KDoc comment
+    (writing an API path with a wildcard, say) silently opens a nested comment and the build
+    fails with "Unclosed comment". Reword rather than hunt for the cause twice.
 - **Local infra:** `docker compose up -d` (Postgres + the Pub/Sub emulator, topics and
   subscriptions included). Docker Engine runs in WSL2 (no Docker Desktop). Because the emulator
   pushes over HTTP, run the services in that same WSL2 session and bind uvicorn to `0.0.0.0`.
