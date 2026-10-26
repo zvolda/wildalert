@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+
+    // Strict on purpose: coming from Kotlin, these are the checks that make TypeScript behave
+    // the way you already expect -- nullability is real, and an array lookup can miss.
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    // Vite transpiles each file on its own, so type-only imports must be erasable by sight.
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    // Vite does the emitting; tsc is only ever a type checker here (see the build script).
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

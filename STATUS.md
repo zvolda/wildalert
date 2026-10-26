@@ -650,10 +650,60 @@ longer exist in the repo, but what each slice proved still holds._
   `roles/editor`, so its user-account lookups would succeed *by accident* and slice 5's ID-token
   path would never actually be exercised.
 
+## Started early — Phase 8 (frontend)
+- **Slice 1 (written 2026-10-26, NOT yet verified): hunter registration UI.** The product had no
+  front door — every row in `hunter` was inserted by hand or by `curl` — so this is one screen:
+  register, then show the hunter their personal inbound address with setup help. New top-level
+  `web/`: React + TypeScript + Vite + Tailwind v4, **not** a Gradle module, so `./gradlew build`
+  is untouched. Nothing in `services/` was changed.
+  - **It needs no backend change and no CORS, by construction.** The browser calls a same-origin
+    `/api/hunters` and Vite's dev proxy forwards it to `user-account` on :8081. In production the
+    same job falls to **Spring Cloud Gateway**, which will serve the built files *and* proxy
+    `/api/**` to the private `user-account` with an ID token — one origin either way, so the React
+    code is identical and the decision could be deferred. That gateway is the next slice.
+  - **Why an edge is needed at all:** `user-account` is deployed `Require authentication` and
+    serves phone numbers, so a browser cannot reach it and should not be able to. Every
+    `roles/run.invoker` grant on it belongs to a Google service account.
+  - **Shape:** pure logic (E.164/email validation, RFC 9457 error parsing) sits in its own modules
+    so Vitest runs in a plain **node** environment — no jsdom, no DOM-testing library. 400 field
+    errors land on the matching input; a 409 duplicate shows against the email field rather than
+    as a banner; a validation error for a field the form does not render is surfaced instead of
+    dropped, because silently discarding one is how a form becomes inexplicably stuck.
+  - **`types.ts`/`validation.ts` deliberately duplicate `HunterDtos.kt`** (there is no shared
+    schema). Each copy names the other in a comment so the pair is findable.
+  - **Blocked before any verification could run: `npm install` does not work on the Oracle
+    corporate network.** Its web gateway (McAfee, branded *Oracle Secure Web Gateway*) re-signs
+    TLS to `registry.npmjs.org` and sends **only the leaf certificate**; the issuing intermediate
+    is not sent, is in no Windows certificate store, and is not fetchable — the leaf's AIA
+    extension carries only OCSP, no `caIssuers` URL. Node ships its own CA bundle and has no
+    `--use-system-ca` before v22, so it cannot build a chain:
+    `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Adding the `oracle-ztna-root-ca` root via
+    `NODE_EXTRA_CA_CERTS` does **not** fix it — the gap is the intermediate. `npm install` hangs
+    ~15 minutes retrying and writes nothing.
+    - **A misleading symptom, recorded so it doesn't cost an hour twice:** `npm view <pkg>`
+      *succeeds* for anything already in `%LOCALAPPDATA%\npm-cache` and fails only for packages
+      never installed here. It looks package-specific. It isn't — a direct registry request
+      fails for every package, from Node and from PowerShell alike.
+    - **Decided: no TLS bypass.** `npm install` happens from outside the corporate network
+      instead; `node_modules/` and `package-lock.json` then persist, and dev/test/build are all
+      local afterwards.
+  - **Therefore unverified and honestly outstanding:** `npm install`, `npm test`, `npm run build`,
+    the proxy carrying a real registration, and any look at the thing in a browser. Also the two
+    `ProblemDetail` bodies in `problemDetail.test.ts` are written from `GlobalExceptionHandler.kt`
+    and Spring's documented shape, **not captured from a running service** — they are marked as
+    such in the file and must be reconciled against real 400/409 responses. A guessed response
+    shape is exactly what bit us in slice 12.
+  - **Versions:** `vite@^8.2.0` (engines `^20.19.0 || >=22.12.0`; this machine is Node 20.19.5, so
+    exactly at the floor), `react`/`react-dom@^19.2.8`, `@vitejs/plugin-react@^6.0.5`,
+    `typescript@~5.9.3` — deliberately *not* the current `typescript@7.0.2`, the new native
+    compiler, on a learning project. `tailwindcss`/`@tailwindcss/vite@^4` and `vitest@^4` could
+    not be checked (never cached locally, and the registry is unreachable), so those two ranges
+    are the ones to confirm when install first runs.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth).
-- **8 — React frontend.**
+- **8 — React frontend** — slice 1 (registration UI) written, unverified; see above.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions

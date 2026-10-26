@@ -46,6 +46,14 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
   - The real DeepFaune model runs only in the Docker image
     (`docker build -t wildalert-recognition services/recognition`); it needs Python 3.12
     (torch has no 3.14 wheels) and is enabled by `RECOGNITION_CLASSIFIER=deepfaune`.
+- **Web app** (`web/` — React + TypeScript + Vite + Tailwind v4; **not** a Gradle module, so
+  `./gradlew build` ignores it):
+  - `cd web && npm install`, then `npm run dev` (http://localhost:5173)
+  - `npm test` — Vitest, plain **node** environment (no jsdom, no DOM-testing library: the
+    testable logic is kept in pure modules on purpose)
+  - `npm run build` — `tsc --noEmit` then a real Vite build
+  - It needs `user-account` on :8081; the browser calls same-origin `/api/*` and Vite's dev
+    proxy forwards it, which is why there is no CORS config anywhere. See `web/README.md`.
 - **Local infra:** `docker compose up -d` (Postgres + the Pub/Sub emulator, topics and
   subscriptions included). Docker Engine runs in WSL2 (no Docker Desktop). Because the emulator
   pushes over HTTP, run the services in that same WSL2 session and bind uvicorn to `0.0.0.0`.
@@ -53,6 +61,21 @@ Email → email-ingestion (Kotlin) --ImageReceived--> Pub/Sub
 ## Local-dev environment gotchas (this machine)
 - WSL2 shuts the distro down between separate shell invocations, killing running containers —
   do multi-step Docker work in ONE session.
+- **Corporate TLS interception breaks the npm registry.** This machine sits behind an
+  **Oracle Secure Web Gateway** that re-signs TLS, and it presents *only* the leaf certificate —
+  the issuing intermediate is neither sent nor present in the Windows certificate stores, so no
+  chain can be built. Windows-native clients cope; Node does not (it ships its own CA bundle and
+  has no `--use-system-ca` before Node 22), so npm fails with
+  `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Adding the `oracle-ztna-root-ca` root to
+  `NODE_EXTRA_CA_CERTS` is **not** enough, because the missing certificate is the intermediate.
+  Beware a misleading symptom: `npm view <pkg>` succeeds for packages already in
+  `%LOCALAPPDATA%\npm-cache` and fails only for new ones, which looks package-specific but is not.
+  **Decided 2026-10-26: no TLS bypass.** Do not set `strict-ssl false` or
+  `NODE_TLS_REJECT_UNAUTHORIZED=0` on this machine, and do not propose it. `npm install` is run
+  **from outside the corporate network** instead; `node_modules/` and `package-lock.json` then
+  persist, so everything afterwards (dev server, tests, build) is local and works on-network. The
+  properly clean alternative, if it is ever wanted, is the gateway CA certificate from Oracle IT
+  pointed at by `npm config set cafile`.
 - The Windows host **can** reach WSL2 Docker published ports (verified 2026-09-17:
   `Test-NetConnection localhost -Port 5432` → True, and `:services:user-account:test`
   `contextLoads` passes over real JDBC). An earlier note here claimed the opposite — it was wrong.

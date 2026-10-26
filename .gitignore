@@ -11,6 +11,10 @@ build/
 *.log
 out/
 
+# Web app (web/ -- React + Vite; not part of the Gradle build)
+node_modules/
+web/dist/
+
 # Python (recognition service)
 __pycache__/
 *.py[cod]
