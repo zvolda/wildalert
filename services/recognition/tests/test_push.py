@@ -22,7 +22,7 @@ from app.publisher import get_event_publisher
 
 client = TestClient(app)
 
-RECIPIENT = "7f3k9qabcdef@in.wildalert.local"
+RECIPIENT = "7f3k9qabcdef@wildalert.local"
 SOURCE_EVENT_ID = UUID("aaaaaaaa-0000-4000-8000-000000000001")
 STORAGE_KEY = "inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg"
 

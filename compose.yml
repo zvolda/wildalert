@@ -189,7 +189,9 @@ services:
       SPRING_PROFILES_ACTIVE: pubsub
       SPRING_CLOUD_GCP_PROJECT_ID: wildalert-local
       SPRING_CLOUD_GCP_PUBSUB_EMULATOR_HOST: pubsub:8085
-      USER_ACCOUNT_BASE_URL: http://user-account:8081
+      # Must be the same value user-account mints addresses on (above), or no recipient is
+      # matched and the local pipeline goes quiet without erroring.
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-wildalert.local}
       STORAGE_PROVIDER: filesystem
       STORAGE_FILESYSTEM_ROOT: /data/images
     ports:

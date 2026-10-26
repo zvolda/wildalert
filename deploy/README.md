@@ -34,7 +34,7 @@ gets entered.
 | Password secret | `wildalert-db-password` (global secret, automatic replication) |
 | Service account | `wildalert-user-account@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor` — nothing else |
-| `INBOUND_EMAIL_DOMAIN` | `wildalert.app` — the **apex** of the Cloudflare zone, not a subdomain (registered 2026-10-14; the deployed revision still says `in.wildalert.local` until it is updated) |
+| `INBOUND_EMAIL_DOMAIN` | `wildalert.app` — the **apex** of the Cloudflare zone, not a subdomain (registered 2026-10-14). **Required on user-account *and* email-ingestion, with the same value**: user-account mints `<token>@<domain>`, email-ingestion matches it to pick which recipient is ours. A mismatch matches nothing, publishes every photo with no recipient and texts nobody — with a 200 and no error. The local default is `wildalert.local` on both, pinned by `InboundDomainContractTest`. |
 
 ### email-ingestion — the public one
 

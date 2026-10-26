@@ -56,7 +56,7 @@ class AnimalRecognizedPushControllerTest {
     fun `parses the JSON published by the Python recognition service`() {
         // Captured from app/events.py itself, not hand-written: note recipient carries the hunter's
         // inbound address and hunterId is now always null.
-        val payload = """{"eventId":"afc3e286-b870-4787-a5aa-b097a08bed2e","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","recipient":"7f3k9qabcdef@in.wildalert.local","hunterId":null,"storageKey":"inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg","species":"wild boar","confidence":0.9998869895935059,"lowConfidence":false,"occurredAt":"2026-09-15T11:40:58.981643Z"}"""
+        val payload = """{"eventId":"afc3e286-b870-4787-a5aa-b097a08bed2e","sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","recipient":"7f3k9qabcdef@wildalert.local","hunterId":null,"storageKey":"inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg","species":"wild boar","confidence":0.9998869895935059,"lowConfidence":false,"occurredAt":"2026-09-15T11:40:58.981643Z"}"""
 
         val response = controller.onPush(push(payload))
 
@@ -65,7 +65,7 @@ class AnimalRecognizedPushControllerTest {
             AnimalRecognized(
                 eventId = UUID.fromString("afc3e286-b870-4787-a5aa-b097a08bed2e"),
                 sourceEventId = UUID.fromString("aaaaaaaa-0000-4000-8000-000000000001"),
-                recipient = "7f3k9qabcdef@in.wildalert.local",
+                recipient = "7f3k9qabcdef@wildalert.local",
                 storageKey = "inbound/2026/09/15/11111111-1111-4111-8111-111111111111.jpg",
                 species = "wild boar",
                 confidence = 0.9998869895935059,

@@ -44,7 +44,7 @@ def _event(
 
 
 def test_classifies_the_stored_image_and_links_back_to_the_source_event():
-    event = _event(recipient="7f3k9qabcdef@in.wildalert.local")
+    event = _event(recipient="7f3k9qabcdef@wildalert.local")
     classifier = RecordingClassifier(confidence=0.9)
 
     result = handle(event, FakeImageSource({event.storage_key: IMAGE}), classifier, threshold=0.7)

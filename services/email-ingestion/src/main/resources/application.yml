@@ -40,9 +40,14 @@ webhook:
 
 inbound:
   # The domain hunters' personal inbound addresses live on (`<token>@<this>`). Used only to pick
-  # which of an email's recipients is ours — plain string matching, no lookup. Must match
-  # INBOUND_EMAIL_DOMAIN on user-account, which mints those addresses.
-  email-domain: ${INBOUND_EMAIL_DOMAIN:in.wildalert.local}
+  # which of an email's recipients is ours — plain string matching, no lookup.
+  #
+  # Must match `hunters.inbound-domain` on user-account, which mints those addresses: a mismatch
+  # means no recipient is ever found, every photo publishes with none, and nobody is texted —
+  # silently, because an email with no recognizable recipient is a 200 here by design. The two
+  # defaults are therefore deliberately the same string. The old `in.` default was a leftover
+  # from the subdomain design that the Cloudflare apex-catch-all decision replaced.
+  email-domain: ${INBOUND_EMAIL_DOMAIN:wildalert.local}
 
 events:
   # 'logging' (fake, default) or 'pubsub'. Prefer the 'pubsub' Spring profile, which sets this
