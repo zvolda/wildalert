@@ -884,10 +884,40 @@ which is a run, not a test.
     each a Cloud SQL row and a future SMS cost, and `max-instances` is a spend cap, not a rate
     limit. Add Cloudflare Turnstile to the form, or front it with a Cloudflare rate-limiting rule,
     before it sits on the internet for longer than a test. Flagged at the top of step 10h too.
-  - **Still outstanding, unchanged from slice 1:** nobody has seen the UI in a browser, the dev
-    proxy has never carried a real registration, and the two `ProblemDetail` bodies in the web
-    tests are still inferred rather than captured. All three need `node_modules` on a machine that
-    can also reach Postgres — i.e. one install from a non-blocked network.
+- **Slice 3 (2026-10-27): the local install finally happened, and the stack ran end to end.**
+  `npm ci` from outside the corporate network: **58 packages in 2 seconds**, and the local build
+  produced `index-Ba2nHyTl.css` — **the same hash Cloud Build produced**, so the lockfile really
+  is reproducing that build. 20 tests and `tsc --noEmit` green on this machine too.
+  - **A real registration went through the Vite proxy into Postgres.** Postgres in WSL2 →
+    `user-account` on :8081 (up in 7s) → Vite on :5173. `POST /api/hunters` through the proxy
+    returned **201** with `inboundAddress: ew3px7356krb@wildalert.local`, and the email came back
+    **lowercased** (`Browser.Check@Example.COM` → `browser.check@example.com`), which is exactly
+    why the success panel renders the response rather than what was typed.
+  - **Both `ProblemDetail` fixtures were confirmed character-for-character.** The inferred 400 and
+    409 bodies matched the real ones exactly; the test file now says *verified* instead of
+    *not yet reconciled*. The guesses were right — but they were still guesses until now.
+  - **A real bug the live run caught, now fixed.** `"Browser.Check@Example.COM "` with one
+    trailing space is **rejected** with `{"email":"must be a valid email address"}`: Jakarta's
+    `@Email` validates the **raw** body, and `HunterService.register` only trims *afterwards*.
+    The client trims before its own check, so it would have said the address was fine and the
+    server would have disagreed — the most confusing failure a form can produce, and browsers
+    leave trailing spaces behind routinely when autofilling. Fixed with `forSubmission()` in
+    `validation.ts`, which trims email and phone before both validating and sending; 3 tests.
+    Web tests now **23**.
+  - **A second assumption checked while a real server was up:** `hunter@localhost` (no dot in the
+    domain) returns **201**, so the deliberately lenient client-side email check was correct not
+    to reject it. That test's comment now cites the live result instead of reasoning about
+    Jakarta.
+  - **Node 20 is a problem to resolve, not a blocker today.** `npm ci` warns
+    `EBADENGINE: vitest@5.0.5 requires node ^22.12.0 || ^24 || >=26, current v20.19.5`. It runs
+    fine regardless — 23 tests pass — but it is an unsupported configuration that any vitest patch
+    could break, and **Node 20 is past end-of-life**. Vite 8 also wants `^20.19 || >=22.12`, so
+    this stack is asking for Node 22+. Recommended fix is upgrading Node (nvm4w is already
+    installed) rather than pinning vitest back to 4 to prop up an EOL runtime. Cloud Build runs
+    `node:22` and never saw this, which is how the mismatch got in.
+  - **Still outstanding:** nobody has *looked* at the UI in a browser. The data path is now proven
+    end to end, but the three visual states (empty form, field errors, success panel), dark mode
+    and the copy button are unverified — that needs a human with the dev server open.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,

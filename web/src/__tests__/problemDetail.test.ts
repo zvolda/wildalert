@@ -5,10 +5,9 @@ import { parseProblem } from '../problemDetail'
  * The bodies below are Spring's ProblemDetail serialization as produced by
  * services/user-account/.../web/GlobalExceptionHandler.kt.
  *
- * NOT YET RECONCILED against a running user-account -- they are written from the handler's code
- * and Spring's documented shape. Capture the two real responses (a 400 and a 409 from
- * POST /api/hunters) and paste them in verbatim; the value of these tests is that they are not
- * paraphrased, and a guessed shape is exactly how the GoSMS parsing bug got in.
+ * **Verified against a running user-account on 2026-10-27**, captured through the Vite dev proxy.
+ * The bodies below are character-for-character what the service returned; keep them that way.
+ * A guessed shape is how the GoSMS parsing bug got in, so these are not paraphrased.
  */
 
 const VALIDATION_400 = {

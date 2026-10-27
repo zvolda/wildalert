@@ -30,6 +30,25 @@ export function validateEmail(email: string): string | undefined {
   return undefined
 }
 
+/**
+ * What actually gets sent. Trimming matters more than it looks: the server validates the **raw**
+ * body with Jakarta's `@Email`, and only normalises (trim + lowercase) afterwards in
+ * `HunterService.register`. So a trailing space is rejected with
+ * `"must be a valid email address"` — verified against a running user-account on 2026-10-27 —
+ * even though the client's own check trims before testing and would happily accept it.
+ *
+ * Without this, the form says the address is fine and the server disagrees, which is the most
+ * confusing failure a form can produce. Browsers also leave a trailing space behind routinely
+ * when autofilling or pasting.
+ */
+export function forSubmission(request: RegisterHunterRequest): RegisterHunterRequest {
+  return {
+    email: request.email.trim(),
+    phone: request.phone.trim(),
+    plan: request.plan,
+  }
+}
+
 /** Validates the whole form. An empty object means "nothing to complain about". */
 export function validateRegistration(request: RegisterHunterRequest): FieldErrors {
   const errors: FieldErrors = {}

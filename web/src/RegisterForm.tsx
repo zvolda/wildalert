@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { RegistrationError, registerHunter } from './api'
-import { hasErrors, validateRegistration } from './validation'
+import { forSubmission, hasErrors, validateRegistration } from './validation'
 import { PLANS, type FieldErrors, type HunterResponse, type Plan } from './types'
 
 interface Props {
@@ -23,7 +23,9 @@ export default function RegisterForm({ onRegistered }: Props) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const request = { email, phone, plan }
+    // Trimmed before both validating and sending, so the client's verdict and the server's
+    // cannot disagree over whitespace. See forSubmission.
+    const request = forSubmission({ email, phone, plan })
 
     const clientErrors = validateRegistration(request)
     if (hasErrors(clientErrors)) {
