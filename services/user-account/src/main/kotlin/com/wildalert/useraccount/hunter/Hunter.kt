@@ -2,8 +2,6 @@ package com.wildalert.useraccount.hunter
 
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
-import jakarta.persistence.EnumType
-import jakarta.persistence.Enumerated
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
@@ -25,10 +23,6 @@ class Hunter(
 
     @Column(nullable = false)
     var phone: String,
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    var plan: Plan,
 
     @Column(nullable = false)
     var active: Boolean = true,

@@ -1,29 +1,24 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { RegistrationError, registerHunter } from './api'
-import { hasErrors, validateRegistration } from './validation'
-import { PLANS, type FieldErrors, type HunterResponse, type Plan } from './types'
+import { forSubmission, hasErrors, validateRegistration } from './validation'
+import { type FieldErrors, type HunterResponse } from './types'
 
 interface Props {
   onRegistered: (hunter: HunterResponse) => void
 }
 
-const PLAN_LABELS: Record<Plan, string> = {
-  FREE: 'Free',
-  BASIC: 'Basic',
-  PRO: 'Pro',
-}
-
 export default function RegisterForm({ onRegistered }: Props) {
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
-  const [plan, setPlan] = useState<Plan>('FREE')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [banner, setBanner] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const request = { email, phone, plan }
+    // Trimmed before both validating and sending, so the client's verdict and the server's
+    // cannot disagree over whitespace. See forSubmission.
+    const request = forSubmission({ email, phone })
 
     const clientErrors = validateRegistration(request)
     if (hasErrors(clientErrors)) {
@@ -118,33 +113,6 @@ export default function RegisterForm({ onRegistered }: Props) {
             />
           )}
         </Field>
-
-        <fieldset>
-          <legend className="text-sm font-medium">Plan</legend>
-          <div className="mt-2 flex gap-2">
-            {PLANS.map((option) => (
-              <label
-                key={option}
-                className={
-                  'flex-1 cursor-pointer rounded-lg border px-3 py-2 text-center text-sm transition ' +
-                  (plan === option
-                    ? 'border-moss-600 bg-moss-50 font-medium text-moss-800 dark:border-moss-400 dark:bg-moss-950 dark:text-moss-100'
-                    : 'border-stone-300 hover:border-stone-400 dark:border-stone-700 dark:hover:border-stone-600')
-                }
-              >
-                <input
-                  type="radio"
-                  name="plan"
-                  value={option}
-                  checked={plan === option}
-                  onChange={() => setPlan(option)}
-                  className="sr-only"
-                />
-                {PLAN_LABELS[option]}
-              </label>
-            ))}
-          </div>
-        </fieldset>
 
         <button
           type="submit"

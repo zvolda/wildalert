@@ -18,7 +18,7 @@ class InboundAddressesTest {
 
     @Test
     fun `address is the hunter's token at the configured domain`() {
-        val hunter = Hunter("hunter@example.com", "+420123456789", Plan.FREE)
+        val hunter = Hunter("hunter@example.com", "+420123456789")
         ReflectionTestUtils.setField(hunter, "inboundToken", "7f3k9qabcdef")
 
         assertThat(addresses.addressFor(hunter)).isEqualTo("7f3k9qabcdef@in.wildalert.test")

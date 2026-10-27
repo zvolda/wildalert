@@ -23,7 +23,6 @@ class HunterService(
         val hunter = Hunter(
             email = email,
             phone = request.phone,
-            plan = request.plan,
         )
         return repository.save(hunter)
     }
@@ -58,7 +57,6 @@ class HunterService(
         val hunter = getById(id)
         // Only overwrite fields the caller actually provided.
         request.phone?.let { hunter.phone = it }
-        request.plan?.let { hunter.plan = it }
         request.active?.let { hunter.active = it }
         // Inside a transaction, JPA "dirty checking" flushes these changes on commit —
         // no explicit save() needed.

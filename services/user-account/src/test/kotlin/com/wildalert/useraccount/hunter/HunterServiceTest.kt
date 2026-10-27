@@ -23,19 +23,18 @@ class HunterServiceTest {
         given(repository.save(any(Hunter::class.java))).willAnswer { it.getArgument<Hunter>(0) }
 
         val result = service.register(
-            RegisterHunterRequest("hunter@example.com", "+420123456789", Plan.PRO),
+            RegisterHunterRequest("hunter@example.com", "+420123456789"),
         )
 
         assertThat(result.email).isEqualTo("hunter@example.com")
         assertThat(result.phone).isEqualTo("+420123456789")
-        assertThat(result.plan).isEqualTo(Plan.PRO)
         assertThat(result.inboundToken).hasSize(12)
         then(repository).should().save(any(Hunter::class.java))
     }
 
     @Test
     fun `getByInboundAddress finds the hunter by the token in the address`() {
-        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE)
+        val existing = Hunter("hunter@example.com", "+420123456789")
         given(repository.findByInboundToken("7f3k9qabcdef")).willReturn(existing)
 
         val result = service.getByInboundAddress(" 7F3K9QABCDEF@in.wildalert.test")
@@ -85,7 +84,7 @@ class HunterServiceTest {
         given(repository.save(any(Hunter::class.java))).willAnswer { it.getArgument<Hunter>(0) }
 
         val result = service.register(
-            RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789", Plan.FREE),
+            RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789"),
         )
 
         assertThat(result.email).isEqualTo("hunter@example.com")
@@ -93,7 +92,7 @@ class HunterServiceTest {
 
     @Test
     fun `getByEmail returns the hunter when the email exists`() {
-        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
+        val existing = Hunter("hunter@example.com", "+420123456789", active = true)
         given(repository.findByEmail("hunter@example.com")).willReturn(existing)
 
         val result = service.getByEmail("hunter@example.com")
@@ -110,7 +109,7 @@ class HunterServiceTest {
 
     @Test
     fun `getByEmail normalizes the lookup so case and whitespace do not matter`() {
-        val existing = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
+        val existing = Hunter("hunter@example.com", "+420123456789", active = true)
         // Stubbed for the normalized form; a raw-input lookup would miss and throw.
         given(repository.findByEmail("hunter@example.com")).willReturn(existing)
 
@@ -122,16 +121,15 @@ class HunterServiceTest {
     @Test
     fun `update changes only the provided fields`() {
         val id = UUID.randomUUID()
-        val existing = Hunter("a@b.com", "+420111111111", Plan.FREE, active = true)
+        val existing = Hunter("a@b.com", "+420111111111", active = true)
         given(repository.findById(id)).willReturn(Optional.of(existing))
 
         val updated = service.update(
             id,
-            UpdateHunterRequest(phone = "+420999999999", plan = Plan.PRO, active = false),
+            UpdateHunterRequest(phone = "+420999999999", active = false),
         )
 
         assertThat(updated.phone).isEqualTo("+420999999999")
-        assertThat(updated.plan).isEqualTo(Plan.PRO)
         assertThat(updated.active).isFalse()
         assertThat(updated.email).isEqualTo("a@b.com") // unchanged
     }

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { hasErrors, validateEmail, validatePhone, validateRegistration } from '../validation'
+import {
+  forSubmission,
+  hasErrors,
+  validateEmail,
+  validatePhone,
+  validateRegistration,
+} from '../validation'
 
 describe('validatePhone', () => {
   // These cases are the server's E164 regex in HunterDtos.kt, read as examples. If the server's
@@ -43,7 +49,8 @@ describe('validateEmail', () => {
   })
 
   it('accepts a dotless domain, because the server does', () => {
-    // Jakarta's @Email allows this. The client must not reject what the server would accept.
+    // Not a guess: POST /api/hunters with "hunter@localhost" returned 201 against a running
+    // user-account on 2026-10-27. The client must not reject what the server accepts.
     expect(validateEmail('hunter@localhost')).toBeUndefined()
   })
 
@@ -58,19 +65,40 @@ describe('validateEmail', () => {
   })
 })
 
+describe('forSubmission', () => {
+  it('trims the email, because the server validates before it normalises', () => {
+    // A real 400 from user-account for "Browser.Check@Example.COM " (trailing space):
+    // {"errors":{"email":"must be a valid email address"}} -- Jakarta's @Email sees the raw
+    // value, and HunterService.register only trims afterwards.
+    expect(forSubmission({ email: '  Hunter@Example.com ', phone: '+420123456789' }))
+      .toEqual({ email: 'Hunter@Example.com', phone: '+420123456789' })
+  })
+
+  it('trims the phone too', () => {
+    expect(forSubmission({ email: 'a@b.c', phone: ' +420123456789 ' }).phone)
+      .toBe('+420123456789')
+  })
+
+  it('does not change the case of the email', () => {
+    // The server lowercases it and the UI renders what comes back, so there is nothing for the
+    // client to second-guess here.
+    expect(forSubmission({ email: 'MiXeD@Case.COM', phone: '+420123456789' }).email)
+      .toBe('MiXeD@Case.COM')
+  })
+})
+
 describe('validateRegistration', () => {
   it('returns nothing to complain about for a valid form', () => {
     const errors = validateRegistration({
       email: 'hunter@example.com',
       phone: '+420123456789',
-      plan: 'FREE',
     })
     expect(errors).toEqual({})
     expect(hasErrors(errors)).toBe(false)
   })
 
   it('reports both fields at once rather than one at a time', () => {
-    const errors = validateRegistration({ email: 'nope', phone: 'nope', plan: 'FREE' })
+    const errors = validateRegistration({ email: 'nope', phone: 'nope' })
     expect(Object.keys(errors).sort()).toEqual(['email', 'phone'])
     expect(hasErrors(errors)).toBe(true)
   })

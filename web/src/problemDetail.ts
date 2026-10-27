@@ -13,7 +13,7 @@ export interface ParsedProblem {
   fieldErrors: FieldErrors
 }
 
-const FORM_FIELDS: readonly FormField[] = ['email', 'phone', 'plan']
+const FORM_FIELDS: readonly FormField[] = ['email', 'phone']
 
 function isFormField(name: string): name is FormField {
   return (FORM_FIELDS as readonly string[]).includes(name)

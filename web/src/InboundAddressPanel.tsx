@@ -114,8 +114,6 @@ export default function InboundAddressPanel({ hunter }: Props) {
       <dl className="mt-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-t border-stone-200 pt-4 text-sm dark:border-stone-800">
         <dt className="text-stone-500 dark:text-stone-500">Email</dt>
         <dd className="break-all">{hunter.email}</dd>
-        <dt className="text-stone-500 dark:text-stone-500">Plan</dt>
-        <dd>{hunter.plan}</dd>
       </dl>
     </div>
   )

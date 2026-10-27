@@ -4,16 +4,10 @@
  * if that file changes, this one has to change with it.
  */
 
-/** Matches the Kotlin `Plan` enum, which is serialized as its name. */
-export type Plan = 'FREE' | 'BASIC' | 'PRO'
-
-export const PLANS = ['FREE', 'BASIC', 'PRO'] as const satisfies readonly Plan[]
-
 /** Body of POST /api/hunters. */
 export interface RegisterHunterRequest {
   email: string
   phone: string
-  plan: Plan
 }
 
 /** 201 response from POST /api/hunters. */
@@ -21,7 +15,6 @@ export interface HunterResponse {
   id: string
   email: string
   phone: string
-  plan: Plan
   active: boolean
   /** Where the hunter forwards trail-cam mail: `<token>@<domain>`. The point of the whole screen. */
   inboundAddress: string
@@ -43,6 +36,6 @@ export interface ProblemDetail {
 }
 
 /** The form fields a server error can be attributed to. */
-export type FormField = 'email' | 'phone' | 'plan'
+export type FormField = 'email' | 'phone'
 
 export type FieldErrors = Partial<Record<FormField, string>>
