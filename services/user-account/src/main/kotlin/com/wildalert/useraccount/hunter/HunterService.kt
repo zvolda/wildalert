@@ -1,5 +1,6 @@
 package com.wildalert.useraccount.hunter
 
+import com.wildalert.useraccount.credit.CreditService
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -12,6 +13,7 @@ import java.util.UUID
 class HunterService(
     private val repository: HunterRepository,
     private val inboundAddresses: InboundAddresses,
+    private val credit: CreditService,
 ) {
 
     @Transactional
@@ -24,7 +26,12 @@ class HunterService(
             email = email,
             phone = request.phone,
         )
-        return repository.save(hunter)
+        val saved = repository.save(hunter)
+        // Inside this same transaction deliberately: a hunter must never exist without a credit
+        // account, and a registration that fails after this point must leave neither behind.
+        // saved.id is non-null because save() flushes the generated UUID.
+        credit.openAccount(saved.id!!)
+        return saved
     }
 
     @Transactional(readOnly = true)

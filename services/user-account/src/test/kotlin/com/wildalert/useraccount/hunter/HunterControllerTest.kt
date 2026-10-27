@@ -1,5 +1,6 @@
 package com.wildalert.useraccount.hunter
 
+import com.wildalert.useraccount.credit.CreditService
 import org.junit.jupiter.api.Test
 import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.willThrow
@@ -28,6 +29,9 @@ class HunterControllerTest {
     @MockitoBean
     lateinit var service: HunterService
 
+    @MockitoBean
+    lateinit var credit: CreditService
+
     @Test
     fun `POST creates a hunter and returns 201`() {
         val id = UUID.randomUUID()
@@ -35,6 +39,7 @@ class HunterControllerTest {
         // (data class equality), so Mockito matches this exact value.
         val expectedRequest = RegisterHunterRequest("hunter@example.com", "+420123456789")
         given(service.register(expectedRequest)).willReturn(sampleHunter(id))
+        given(credit.balanceOf(id)).willReturn(2500)
 
         mockMvc.postJson("""{"email":"hunter@example.com","phone":"+420123456789","plan":"FREE"}""")
             .andExpect(status().isCreated)
@@ -42,6 +47,20 @@ class HunterControllerTest {
             .andExpect(jsonPath("$.email").value("hunter@example.com"))
             // Default domain from application.yml (INBOUND_EMAIL_DOMAIN unset).
             .andExpect(jsonPath("$.inboundAddress").value("7f3k9qabcdef@wildalert.local"))
+            // Haléře, not a formatted string -- the client owns the formatting.
+            .andExpect(jsonPath("$.creditBalanceMinor").value(2500))
+    }
+
+    @Test
+    fun `the response reports the balance in minor units, even when it is zero`() {
+        val id = UUID.randomUUID()
+        given(service.getById(id)).willReturn(sampleHunter(id))
+        given(credit.balanceOf(id)).willReturn(0)
+
+        mockMvc.perform(get("/api/hunters/{id}", id))
+            .andExpect(status().isOk)
+            // Must be present and 0, not absent: a missing field reads as "unknown" to a client.
+            .andExpect(jsonPath("$.creditBalanceMinor").value(0))
     }
 
     @Test

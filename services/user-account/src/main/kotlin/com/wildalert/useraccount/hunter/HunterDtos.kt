@@ -36,16 +36,20 @@ data class HunterResponse(
     val active: Boolean,
     // Where the hunter forwards trail-cam emails (or points the camera).
     val inboundAddress: String,
+    // Remaining credit in CZK minor units (haléře), never a formatted string -- the client
+    // decides how to display money. 2500 is the signup grant.
+    val creditBalanceMinor: Long,
     val createdAt: Instant,
     val updatedAt: Instant,
 ) {
     companion object {
-        fun from(h: Hunter, inboundAddress: String) = HunterResponse(
+        fun from(h: Hunter, inboundAddress: String, creditBalanceMinor: Long) = HunterResponse(
             id = h.id!!,
             email = h.email,
             phone = h.phone,
             active = h.active,
             inboundAddress = inboundAddress,
+            creditBalanceMinor = creditBalanceMinor,
             createdAt = h.createdAt!!,
             updatedAt = h.updatedAt!!,
         )

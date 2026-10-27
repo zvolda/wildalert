@@ -1,5 +1,6 @@
 package com.wildalert.useraccount.hunter
 
+import com.wildalert.useraccount.credit.CreditService
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -8,6 +9,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.never
 import org.mockito.BDDMockito.then
 import org.mockito.Mockito.mock
+import org.springframework.test.util.ReflectionTestUtils
 import java.util.Optional
 import java.util.UUID
 
@@ -15,12 +17,14 @@ import java.util.UUID
 class HunterServiceTest {
 
     private val repository = mock(HunterRepository::class.java)
-    private val service = HunterService(repository, InboundAddresses("in.wildalert.test"))
+    private val credit = mock(CreditService::class.java)
+    private val service = HunterService(repository, InboundAddresses("in.wildalert.test"), credit)
 
     @Test
     fun `register saves a new hunter when the email is free`() {
+        val id = UUID.randomUUID()
         given(repository.existsByEmail("hunter@example.com")).willReturn(false)
-        given(repository.save(any(Hunter::class.java))).willAnswer { it.getArgument<Hunter>(0) }
+        given(repository.save(any(Hunter::class.java))).willAnswer { withId(it.getArgument(0), id) }
 
         val result = service.register(
             RegisterHunterRequest("hunter@example.com", "+420123456789"),
@@ -30,6 +34,33 @@ class HunterServiceTest {
         assertThat(result.phone).isEqualTo("+420123456789")
         assertThat(result.inboundToken).hasSize(12)
         then(repository).should().save(any(Hunter::class.java))
+    }
+
+    @Test
+    fun `register opens a credit account for the new hunter`() {
+        val id = UUID.randomUUID()
+        given(repository.existsByEmail("hunter@example.com")).willReturn(false)
+        given(repository.save(any(Hunter::class.java))).willAnswer { withId(it.getArgument(0), id) }
+
+        service.register(RegisterHunterRequest("hunter@example.com", "+420123456789"))
+
+        // Same transaction as the insert, so a hunter can never exist without a balance.
+        then(credit).should().openAccount(id)
+    }
+
+    @Test
+    fun `a rejected duplicate registration opens no credit account`() {
+        given(repository.existsByEmail("hunter@example.com")).willReturn(true)
+
+        assertThrows<DuplicateEmailException> {
+            service.register(RegisterHunterRequest("hunter@example.com", "+420123456789"))
+        }
+
+        // Otherwise a 409 would leave an orphan credit row behind, granting credit to a hunter
+        // that was never created. Asserting no interaction at all rather than `never()` with a
+        // matcher: Mockito's any() returns null, which blows up on a non-null Kotlin parameter
+        // before the verification even runs.
+        then(credit).shouldHaveNoInteractions()
     }
 
     @Test
@@ -81,7 +112,8 @@ class HunterServiceTest {
     fun `register normalizes the email to lowercase and trims whitespace`() {
         // Stubbed for the normalized form; register must call it with that, not the raw input.
         given(repository.existsByEmail("hunter@example.com")).willReturn(false)
-        given(repository.save(any(Hunter::class.java))).willAnswer { it.getArgument<Hunter>(0) }
+        given(repository.save(any(Hunter::class.java)))
+            .willAnswer { withId(it.getArgument(0), UUID.randomUUID()) }
 
         val result = service.register(
             RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789"),
@@ -133,4 +165,13 @@ class HunterServiceTest {
         assertThat(updated.active).isFalse()
         assertThat(updated.email).isEqualTo("a@b.com") // unchanged
     }
+
+    /**
+     * Stands in for what JPA does on insert. `Hunter.id` has a protected setter so nothing can
+     * assign it by accident, which is right — but `register` needs the generated id to open the
+     * credit account, so a mocked `save` has to produce one. Same trick `HunterControllerTest`
+     * already uses.
+     */
+    private fun withId(hunter: Hunter, id: UUID): Hunter =
+        hunter.also { ReflectionTestUtils.setField(it, "id", id) }
 }

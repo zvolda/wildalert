@@ -28,6 +28,17 @@ server:
   # Cloud Run injects PORT; locally it falls back to the service's own port.
   port: ${PORT:8081}
 
+billing:
+  # What a new hunter starts with, in CZK minor units (haléře). 2500 is ten alerts with their
+  # recognition (100 + 150 each) -- in practice fewer, because every photo pays the 100 whether
+  # or not it alerts.
+  #
+  # This is also the entire abuse budget of an unauthenticated registration form: at 2500 a
+  # scripted signup costs 25 CZK. Set SIGNUP_GRANT_MINOR=0 the day someone finds the form. Rate
+  # limiting (Turnstile or a Cloudflare rule) is the real fix and is a prerequisite for leaving
+  # this non-zero once the gateway is public.
+  signup-grant-minor: ${SIGNUP_GRANT_MINOR:2500}
+
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
   # apex of the Cloudflare Email Routing zone, e.g. wildalert.app -- not a subdomain, because
