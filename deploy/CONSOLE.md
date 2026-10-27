@@ -957,6 +957,116 @@ No secrets. The gateway holds none — it has no database, no SMS account and no
 
 ---
 
+## Step 10i — Deploy detection-history to Cloud Run (the second consumer)
+
+The simplest consumer deploy so far, and the reason is a design decision rather than luck: this
+service **calls nothing**. Notification needs the hunter's phone number, so it needs
+`USER_ACCOUNT_BASE_URL`, `USER_ACCOUNT_AUTH`, an ID-token minter and a `run.invoker` grant on
+user-account — four things that can each be wrong. Detection-history is attributed by the
+`recipient` already on the event, so none of that exists here. All it needs is Postgres.
+
+It is the **second push subscription on `animal.recognized`**, next to notification's. Neither
+knows the other: each gets its own copy of every event and acks independently, so this service can
+be down, cold or redeploying without delaying an SMS.
+
+**One code change was needed before any of this:** the service had no `Dockerfile`. The build stage
+runs jOOQ codegen on the way to `bootJar` (`generateJooq` is a dependency of `compileKotlin`), which
+needs no database — `DDLDatabase` replays the Flyway migrations into in-memory H2 — but does need
+the network to fetch `jooq-codegen` and H2. Verified by building the image locally and running it
+against a real Postgres before deploying.
+
+**Navigation:** Cloud Run → **Deploy container** → **Service**
+
+| Field | Value |
+|---|---|
+| Container image | `…/wildalert/detection-history:<short-sha>` |
+| Service name | `detection-history`, region `europe-west3` |
+| Authentication | **Require authentication** — Pub/Sub pushes with an OIDC token |
+| Ingress | **Internal** — nothing but Pub/Sub push needs to reach it (see the warning below) |
+| Auto-scaling | min **0**, max **3** |
+| CPU / Memory | **1** / **1 GiB** |
+| Container port | **8080** (Cloud Run injects `PORT`; `application.yml` falls back to 8086 locally) |
+| Request timeout | **60s**, matching the subscription's ack deadline |
+| Service account | `wildalert-detection-history@…` |
+| Cloud SQL connection | `wildalert-prod:europe-west3:wildalert-db` |
+| Startup probe | `/actuator/health/readiness` |
+
+| Env | Value |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `pubsub` — turns on the push endpoint |
+| `HISTORY_STORE` | **`postgres`**. Unlike notification's `IDEMPOTENCY_STORE`, this is not an optimisation: the `memory` default forgets every detection on restart, which for a history service is no service at all |
+| `POSTGRES_USER` | `wildalert` |
+| `DATABASE_URL` | `jdbc:postgresql:///wildalert?cloudSqlInstance=wildalert-prod:europe-west3:wildalert-db&socketFactory=com.google.cloud.sql.postgres.SocketFactory` |
+| `POSTGRES_PASSWORD` | **Reference a secret** → `wildalert-db-password` |
+
+**Grants** — two, and deliberately no more:
+
+| Grant | Where |
+|---|---|
+| `roles/cloudsql.client` | the project, for `wildalert-detection-history` |
+| `roles/secretmanager.secretAccessor` | **on `wildalert-db-password` only** — Secret Manager → that secret → Permissions. Not project-wide: that mistake is still open against `user-account` (Phase 7) |
+| `roles/run.invoker` | Cloud Run → `detection-history` → Permissions, for `wildalert-pubsub-push` |
+
+Flyway creates its own `detection_history` schema with its own history table, so it cannot collide
+with user-account's `public` or notification's `notification`.
+
+### The push subscription
+
+**Navigation:** Pub/Sub → Subscriptions → **Create subscription**
+
+| Field | Value |
+|---|---|
+| Subscription ID | `animal.recognized.history` |
+| Topic | `animal.recognized` (the *same* topic notification already consumes) |
+| Delivery type | **Push** → `<detection-history-url>/api/events/animal-recognized` |
+| Enable authentication | **on**, service account `wildalert-pubsub-push@…`, audience blank |
+| Acknowledgement deadline | **60 seconds** |
+| Retry policy | exponential backoff, min **10s**, max **600s** |
+| Dead lettering | on → `animal.recognized.dlt`, max **5** attempts |
+| Message ordering / exactly once | **off** / off |
+
+The dead-letter form offers the service agent's `pubsub.publisher` and `pubsub.subscriber` grants
+with one click — take it, then confirm both landed. The agent already has publisher on
+`animal.recognized.dlt` from notification's subscription, but **subscriber is per-subscription** and
+this is a new one.
+
+> **Adding this subscription changes notification's behaviour not at all** — that is the point of
+> fan-out, and it is worth confirming rather than assuming: after creating it, send one real photo
+> and check that the SMS still arrives *and* a row appears.
+
+### ⚠️ Do not make this service public
+
+The read API is keyed on the hunter's inbound address and there is **no authentication yet**, so
+anyone holding an address could read that hunter's history — and it travels as a query parameter,
+so it lands in access logs. Ingress **Internal** plus *Require authentication* is what keeps that
+safe for now. When the dashboard needs it, it goes behind the **gateway** with an explicit route
+and real user auth (Phase 9) — never a wildcard proxy, for the same reason the gateway does not
+proxy user-account's lookup endpoints.
+
+**Verify, in this order:**
+
+```bash
+URL=$(gcloud run services describe detection-history --region europe-west3 --format='value(status.url)')
+
+# 1. The door is locked. 403 from Cloud Run; a 4xx from the app means auth is NOT required.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$URL/api/events/animal-recognized" -d '{}'
+
+# 2. Flyway ran: the schema and its history table exist.
+gcloud sql connect wildalert-db --user=wildalert --database=wildalert \
+  --quiet <<< "\dt detection_history.*"
+
+# 3. End to end: forward a real photo, then read the history back as an authenticated caller.
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "$URL/api/detections?recipient=<token>@wildalert.app"
+```
+
+A `401` on step 3 means your account lacks `run.invoker` on this service — grant it to yourself
+temporarily, or read the row straight from Cloud SQL instead. An empty `[]` with the SMS having
+arrived means the subscription is wrong, not the service: check `animal.recognized.history` exists
+and points at `/api/events/animal-recognized`.
+
+---
+
 ## Step 11 — Pub/Sub (for the event-driven services, not user-account)
 
 Not needed to run `user-account`, which is plain HTTP. Do this when email-ingestion, recognition and

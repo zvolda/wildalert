@@ -707,21 +707,39 @@ Two things it taught about the toolchain, both now written down in the code:
   Mockito is consulted. Mocks of Java types never hit this. Helpers in `DetectionControllerTest`
   substitute a non-null placeholder for the discarded return value.
 
-Still open for this service: deploy (needs a `wildalert-detection-history` service account, the
-real push subscription, and `HISTORY_STORE=postgres` + Cloud SQL); presigned photo URLs so the
-dashboard can show the images (`storage_key` is stored, the bucket stays private); and **auth
-before the read API is exposed** — the inbound address is currently the only thing identifying a
-hunter and it travels as a query parameter, so this service must not get a public,
-unauthenticated Cloud Run URL.
+The migration was checked against a real Postgres 17 (a throwaway container, one WSL2 session):
+the DDL applies, a duplicate `source_event_id` insert is absorbed by `on conflict do nothing`, the
+check constraint rejects a row owned by nobody, the index is created, and the per-species aggregate
+returns `avg_conf 0.75` — the same number `InMemoryDetectionStoreTest` expects, so the fake and the
+database agree.
 
-The migration **was** checked against a real Postgres 17 (a throwaway container, one WSL2
-session): the DDL applies, a duplicate `source_event_id` insert is absorbed by
-`on conflict do nothing`, the check constraint rejects a row owned by nobody, the index is
-created, and the per-species aggregate returns `avg_conf 0.75` — the same number
-`InMemoryDetectionStoreTest` expects, so the fake and the database agree. What is still unproven
-is the service *running* on Postgres end to end: Flyway on startup, and jOOQ executing (rather
-than just rendering) the queries. That needs `HISTORY_STORE=postgres` against a live database,
-which is a run, not a test.
+### Verified end to end on real Postgres (2026-10-27)
+The gap recorded above — "the service *running* on Postgres, Flyway on startup and jOOQ
+**executing** rather than rendering" — is now closed, as a prerequisite for deploying. The built
+image was run against the local Postgres with `HISTORY_STORE=postgres` (one WSL2 session, because
+containers do not survive between shell invocations here):
+- **Flyway migrated at startup** — `detection_history.detection` and
+  `detection_history.flyway_schema_history` both created; readiness came up `{"status":"UP"}`.
+- **The push endpoint stored an event** (204), and **pushing the identical event again also
+  returned 204 and added no second row** — the primary-key idempotency working against a real
+  database, not a `ConcurrentHashMap`.
+- **jOOQ executed both reads correctly**: `GET /api/detections` returned the row with
+  `occurredAt` round-tripped exactly (`2026-10-27T22:14:00Z`), `GET /api/detections/summary`
+  returned `sightings: 1, averageConfidence: 0.97`, and a species filter matching nothing returned
+  `[]`. Rendering was already tested; this is execution.
+- **An event naming no owner returned 400**, so Pub/Sub would dead-letter it rather than retry.
+
+Also added for the deploy: **`services/detection-history/Dockerfile`**, which the service was
+missing entirely — so it could not have been built at all. jOOQ codegen runs inside the build
+stage (no database needed, but it does need the network for `jooq-codegen` and H2); the image was
+built locally to confirm that before spending a Cloud Build run.
+
+Still open: the deploy itself (service account, Cloud Run revision, push subscription — the
+commands are Step 10i in `deploy/CONSOLE.md`); presigned photo URLs so the dashboard can show the
+images (`storage_key` is stored, the bucket stays private); and **auth before the read API is
+exposed** — the inbound address is currently the only thing identifying a hunter and it travels as
+a query parameter, so this service must stay `Internal` + *Require authentication* and must not get
+a public URL.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only
