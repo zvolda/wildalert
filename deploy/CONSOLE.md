@@ -975,6 +975,13 @@ needs no database — `DDLDatabase` replays the Flyway migrations into in-memory
 the network to fetch `jooq-codegen` and H2. Verified by building the image locally and running it
 against a real Postgres before deploying.
 
+> **Building from PowerShell?** Quote the whole substitutions value:
+> `--substitutions="_SERVICE=detection-history,_IMAGE_BASE=…,SHORT_SHA=…"`. PowerShell treats a
+> bare comma as an array separator, so unquoted it arrives as three separate arguments and the
+> build fails with `key in the template "_IMAGE_BASE" is not matched in the substitution data` —
+> which reads like a bad config file rather than a shell quoting problem. Same for
+> `--set-env-vars` on the deploy below.
+
 **Navigation:** Cloud Run → **Deploy container** → **Service**
 
 | Field | Value |

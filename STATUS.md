@@ -734,12 +734,48 @@ missing entirely — so it could not have been built at all. jOOQ codegen runs i
 stage (no database needed, but it does need the network for `jooq-codegen` and H2); the image was
 built locally to confirm that before spending a Cloud Build run.
 
-Still open: the deploy itself (service account, Cloud Run revision, push subscription — the
-commands are Step 10i in `deploy/CONSOLE.md`); presigned photo URLs so the dashboard can show the
-images (`storage_key` is stored, the bucket stays private); and **auth before the read API is
-exposed** — the inbound address is currently the only thing identifying a hunter and it travels as
-a query parameter, so this service must stay `Internal` + *Require authentication* and must not get
-a public URL.
+### Deployed (2026-10-27) — the fifth service in the cloud
+`detection-history-00001-knh`, image tag `3474742`, revision `Ready`, no errors in its log. The
+runbook is Step 10i in `deploy/CONSOLE.md`; what actually happened:
+
+- **Flyway migrated against real Cloud SQL** (Postgres **18.6**) at startup: created the
+  `detection_history` schema, its own `flyway_schema_history`, applied V1, app up in **9.6s**. The
+  log carries one expected warning — `schema "detection_history" already exists, skipping` — which
+  is the migration's own `create schema if not exists` running *after* Flyway created it. Harmless
+  and predicted by the comment in the migration. Also logged: *"Flyway upgrade recommended:
+  PostgreSQL 18.6 is newer than this version of Flyway"* — the instance is 18, Flyway's tested
+  ceiling is 17. Nothing broke, but it is a real version gap to keep in mind.
+- **Locked down, verified three ways rather than trusted:** ingress is `internal`, the service's
+  IAM policy contains exactly one binding (`run.invoker` for `wildalert-pubsub-push`, no
+  `allUsers`), and a request from the public internet returns **404** — Cloud Run refusing
+  disallowed ingress at the network layer, before authentication is even considered. That is a
+  stronger result than the 403 the other consumers give, because 403 is what an `ingress: All`
+  service answers.
+- **`animal.recognized` now has two push consumers**, `…notification` and `…history`, each with its
+  own OIDC push via `wildalert-pubsub-push`, 60s ack deadline, 10s–600s backoff and dead-lettering
+  to `animal.recognized.dlt` after 5 attempts. The service agent's `pubsub.subscriber` had to be
+  granted on the **new** subscription specifically — it is per-subscription, and without it a
+  message that exhausts its retries is dropped instead of dead-lettered.
+- **Two grants, no more:** `roles/cloudsql.client` and a **per-secret** accessor on
+  `wildalert-db-password`. No user-account access of any kind, because this service calls nothing —
+  the design choice paying off at deploy time.
+- **The service has two URLs**, `…-789527844011.europe-west3.run.app` (the new project-number form,
+  which the deploy prints and the subscription uses) and `…-lznkorfm4q-ey.a.run.app` (the older
+  form, which is what `status.url` reports). Both are assigned to the same service — worth knowing
+  before using either as a token audience, and worth not pattern-matching off the older services.
+
+**Not yet proven:** no real event has traversed the deployed service. A Pub/Sub subscription only
+receives messages published after it exists, so there is no backlog to replay — it takes a photo
+forwarded for real, which also sends an SMS. The app logic itself was proven against real Postgres
+(above); what is untested is purely the cloud path: the OIDC token being accepted and the push
+reaching the endpoint. The first real photo should produce **both** an SMS and a history row; if
+the SMS arrives and no row appears, suspect the subscription or the token audience, not the service.
+
+Still open: presigned photo URLs so the dashboard can show the images (`storage_key` is stored, the
+bucket stays private); and **auth before the read API is exposed** — the inbound address is
+currently the only thing identifying a hunter and it travels as a query parameter, so this service
+must stay `internal` + *Require authentication* and must not get a public URL. When the dashboard
+needs it, it goes behind the gateway with an explicit route, never a wildcard.
 
 ## Remaining Phase 6 work
 - **Pub/Sub push subscriptions still need the *consumers* deployed** (email-ingestion only

@@ -246,9 +246,11 @@ then the async flow, then deploy, then scale.
   - [x] Broker — **Cloud Pub/Sub push subscriptions** (decided 2026-10-08; see Open Decisions).
         Code + local emulator done; the four topics and the `.dlt.inspect` pull subscriptions are
         provisioned. The two **push** subscriptions need the consumers' URLs, so they come with them.
-  - [ ] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible —
-        user-account live 2026-10-08; email-ingestion next (public, the webhook); recognition and
-        notification after it
+  - [~] Deploy all containers to **Cloud Run** (or Railway), scale-to-zero where possible —
+        user-account 2026-10-08, then email-ingestion (public, the webhook), recognition,
+        notification, and **detection-history 2026-10-27** (internal ingress, second push
+        subscription on `animal.recognized`). **`gateway` is the one left**, and it is the only
+        service that is meant to be public.
   - [x] **Service-to-service authentication** — user-account requires authentication, so callers
         mint a Google **ID token whose audience is the target URL** (`UserAccountAuth` in
         email-ingestion, `USER_ACCOUNT_AUTH=gcp-id-token`) and need `roles/run.invoker` on it.
