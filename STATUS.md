@@ -967,6 +967,58 @@ a public URL.
     the migration, not after; Cloud Run's gradual rollout would otherwise have old and new
     revisions live at once, and the old one would fail every write.
 
+## In progress — prepaid credit (replaces the deleted plan enum)
+
+The design lives in a plan document outside the repo, decided over 2026-10-26/27: credit is money
+in CZK haléře, **recognition costs the hunter 1.00 and an alert a further 1.50** (we pay GoSMS
+1.20 — the difference is the margin), top-ups are any amount from 50 to 2000 CZK through Stripe
+Checkout, and a new hunter is granted 2500 haléře. Seven slices; each ships inert behind a flag
+and is switched on by the next.
+
+- **Slice 1 (2026-10-27, done): the ledger exists, nobody spends it.** `V4__create_credit_tables.sql`
+  plus a `com.wildalert.useraccount.credit` package — `HunterCredit` (the balance, one row per
+  hunter), `CreditLedgerEntry` (append-only history), repositories and `CreditService`. The signup
+  grant is written inside `HunterService.register`'s **existing transaction**, so a hunter can
+  never exist without a balance and a rejected duplicate leaves no orphan credit row.
+  `creditBalanceMinor` was added to `HunterResponse` and to `web/src/types.ts`.
+  - **Nothing debits anything yet** — no charge endpoint, no Stripe, no notification or
+    recognition change, no UI. That is deliberate: this slice is only the money being *there*.
+  - **The balance is a cache and the ledger is the truth.** `balance_minor` must always equal the
+    sum of that hunter's entries; the column exists so a future charge is one indexed read and one
+    guarded update rather than a re-sum of history. A test pins the equality, and a reconciliation
+    job across all hunters is a later slice.
+  - **Two constraints and a partial unique index do the real work**, and are tested against a live
+    Postgres because a mock cannot test a constraint: `balance_minor >= 0` (so any future code
+    that forgets the guarded update fails loudly instead of running up silent debt),
+    `amount_minor between -10000 and 10000000` (a debit amount will arrive over HTTP from another
+    service, so it is input, not truth), and a **partial** unique index on
+    `(entry_type, external_ref)` — the whole idempotency mechanism. Partial because grants and
+    adjustments have no external ref and many nulls must coexist; keyed on both columns because
+    one event will later charge a `RECOGNITION_DEBIT` *and* an `SMS_DEBIT` under the same
+    `sourceEventId`. There is a test for each of those three properties.
+  - **Verified live, not only in tests.** `POST /api/hunters` returned **201 with
+    `creditBalanceMinor: 2500`**, and the database shows the balance row and a matching
+    `SIGNUP_GRANT` ledger entry (`amount 2500`, `balance_after 2500`, null `external_ref`)
+    committed together. The **migration backfill was checked against the real dev database with
+    rows already in it** — 5 existing hunters, 5 credit rows, 5 ledger rows, every balance 2500 —
+    which is how `V2`'s backfill was verified too.
+  - **Tests:** 158 Kotlin across the repo (user-account 34, was 24), 0 failures; web 23 and
+    `tsc --noEmit` clean.
+  - **Two things cost a build each, both worth remembering.**
+    - **Postgres `char(3)` is `bpchar`, and Hibernate's `validate` rejects it** against a Kotlin
+      `String`: *"found [bpchar (Types#CHAR)], but expecting [varchar(3)]"*. It broke
+      `contextLoads` too, so it looked worse than it was. Fixed by making the column `varchar(3)`,
+      which is the better choice anyway — Postgres gives `char(n)` no advantage and blank-pads it.
+    - **`EntityManager.flush()` does not get Spring's exception translation.** A constraint
+      violation surfaces there as a JPA `PersistenceException`, not
+      `DataIntegrityViolationException`, so three constraint tests failed while the constraints
+      were working perfectly. Repository methods (`saveAndFlush`, `flush`) are translated; the
+      test now goes through those.
+  - **A local-dev note:** editing an already-applied migration changes its checksum and Flyway
+    then refuses to start. Fixing V4 meant dropping both tables and deleting its
+    `flyway_schema_history` row by hand. Fine for a migration that has never left this machine —
+    not an option once one has been deployed.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control now belongs here and is no longer optional** once the

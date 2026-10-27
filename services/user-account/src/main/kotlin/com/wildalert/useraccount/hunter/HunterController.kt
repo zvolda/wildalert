@@ -1,5 +1,6 @@
 package com.wildalert.useraccount.hunter
 
+import com.wildalert.useraccount.credit.CreditService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -19,6 +20,7 @@ import java.util.UUID
 class HunterController(
     private val service: HunterService,
     private val inboundAddresses: InboundAddresses,
+    private val credit: CreditService,
 ) {
 
     /** Register a new hunter. Returns 201 Created with the stored record. */
@@ -57,5 +59,9 @@ class HunterController(
     ): HunterResponse =
         response(service.update(id, request))
 
-    private fun response(hunter: Hunter) = HunterResponse.from(hunter, inboundAddresses.addressFor(hunter))
+    private fun response(hunter: Hunter) = HunterResponse.from(
+        hunter,
+        inboundAddresses.addressFor(hunter),
+        credit.balanceOf(hunter.id!!),
+    )
 }

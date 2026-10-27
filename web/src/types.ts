@@ -18,6 +18,11 @@ export interface HunterResponse {
   active: boolean
   /** Where the hunter forwards trail-cam mail: `<token>@<domain>`. The point of the whole screen. */
   inboundAddress: string
+  /**
+   * Remaining credit in CZK minor units (haléře) — 2500 is the signup grant. Minor units, not a
+   * formatted string, so the client owns the formatting. Nothing spends it yet.
+   */
+  creditBalanceMinor: number
   createdAt: string
   updatedAt: string
 }
