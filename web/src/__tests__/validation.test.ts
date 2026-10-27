@@ -70,19 +70,19 @@ describe('forSubmission', () => {
     // A real 400 from user-account for "Browser.Check@Example.COM " (trailing space):
     // {"errors":{"email":"must be a valid email address"}} -- Jakarta's @Email sees the raw
     // value, and HunterService.register only trims afterwards.
-    expect(forSubmission({ email: '  Hunter@Example.com ', phone: '+420123456789', plan: 'FREE' }))
-      .toEqual({ email: 'Hunter@Example.com', phone: '+420123456789', plan: 'FREE' })
+    expect(forSubmission({ email: '  Hunter@Example.com ', phone: '+420123456789' }))
+      .toEqual({ email: 'Hunter@Example.com', phone: '+420123456789' })
   })
 
   it('trims the phone too', () => {
-    expect(forSubmission({ email: 'a@b.c', phone: ' +420123456789 ', plan: 'PRO' }).phone)
+    expect(forSubmission({ email: 'a@b.c', phone: ' +420123456789 ' }).phone)
       .toBe('+420123456789')
   })
 
   it('does not change the case of the email', () => {
     // The server lowercases it and the UI renders what comes back, so there is nothing for the
     // client to second-guess here.
-    expect(forSubmission({ email: 'MiXeD@Case.COM', phone: '+420123456789', plan: 'FREE' }).email)
+    expect(forSubmission({ email: 'MiXeD@Case.COM', phone: '+420123456789' }).email)
       .toBe('MiXeD@Case.COM')
   })
 })
@@ -92,14 +92,13 @@ describe('validateRegistration', () => {
     const errors = validateRegistration({
       email: 'hunter@example.com',
       phone: '+420123456789',
-      plan: 'FREE',
     })
     expect(errors).toEqual({})
     expect(hasErrors(errors)).toBe(false)
   })
 
   it('reports both fields at once rather than one at a time', () => {
-    const errors = validateRegistration({ email: 'nope', phone: 'nope', plan: 'FREE' })
+    const errors = validateRegistration({ email: 'nope', phone: 'nope' })
     expect(Object.keys(errors).sort()).toEqual(['email', 'phone'])
     expect(hasErrors(errors)).toBe(true)
   })

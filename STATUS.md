@@ -919,6 +919,36 @@ which is a run, not a test.
     end to end, but the three visual states (empty form, field errors, success panel), dark mode
     and the copy button are unverified — that needs a human with the dev server open.
 
+- **Slice 4 (2026-10-27): the subscription plan is gone.** `FREE`/`BASIC`/`PRO` was written in
+  Phase 1 and **never read by anything** — no branch in `SmsPolicy`, nothing in notification, no
+  pricing attached. It was stored, returned and settable, and the registration form asked new
+  hunters to pick between three options that had no effect, which is worse than not asking.
+  - **Replaced by prepaid credit**, designed as its own feature and not yet built. The reasoning: SMS is ~90% of cost and strictly per-message, so credit prices what we actually
+    spend, where a tier prices capacity nobody can size in advance — trail-cam traffic differs by
+    an order of magnitude between a game trail and a garden. It is also a **hard spend cap**, which
+    is a stronger answer to the open-registration abuse gap than a CAPTCHA: an abuser who has not
+    paid cannot cost us an SMS. Deliberately split: this slice only removes the dead concept.
+  - **Removed:** `Plan.kt`; the field from `Hunter`, `RegisterHunterRequest`, `UpdateHunterRequest`,
+    `HunterResponse` and `HunterService`; Flyway **`V3__drop_hunter_plan.sql`**; the plan radio
+    group from `RegisterForm.tsx`, the row from `InboundAddressPanel.tsx`, and the `Plan` type,
+    `PLANS` and the `'plan'` member of `FormField` from the web contract. 13 test fixtures updated.
+  - **Verified against the running stack, not just compiled.** Full `./gradlew build` green (148
+    Kotlin tests, 33 classes, 0 failures) and web green (23 tests, `tsc --noEmit` clean; the bundle
+    shrank 229.40 → 228.54 kB and the CSS 17.54 → 17.32 kB, which is the radio-group markup and its
+    styles going away). Then, with Postgres and a freshly started user-account: Flyway reported
+    **`Current version of schema "public": 3`**, and `POST /api/hunters` with **no plan field**
+    returned **201**, through the Vite proxy as well as directly.
+  - **Rollout is safe for clients that still send `plan`.** A request carrying `"plan":"PRO"` still
+    returns 201 — Spring Boot leaves Jackson's `FAIL_ON_UNKNOWN_PROPERTIES` off, so the field is
+    ignored rather than rejected. A browser tab holding the old bundle, or an old gateway image,
+    therefore keeps working. Verified, not assumed.
+  - **A sharp edge worth knowing for local dev:** applying V3 while an *old* user-account was still
+    running made every registration 500 — the running code still inserted a column that no longer
+    existed. Harmless locally, but it is a reminder that this migration is **not** backward
+    compatible with the previous revision. In the cloud, deploy the new image *before* (or with)
+    the migration, not after; Cloud Run's gradual rollout would otherwise have old and new
+    revisions live at once, and the old one would fail every write.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control now belongs here and is no longer optional** once the

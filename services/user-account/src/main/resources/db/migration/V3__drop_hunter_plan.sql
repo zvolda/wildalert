@@ -1,0 +1,13 @@
+-- Drops the subscription tier. FREE/BASIC/PRO was written in Phase 1 and never read by anything:
+-- no branch in SmsPolicy, nothing in notification, no pricing attached. It was stored, returned
+-- and settable, and the registration form asked new hunters to choose between three options that
+-- had no effect.
+--
+-- It is replaced by a prepaid credit balance, which matches the actual cost structure: SMS is
+-- ~90% of cost and is strictly per-message, so usage-based credit prices what we actually spend,
+-- where a tier prices capacity nobody can size in advance. Credit arrives in its own slice; this
+-- only removes the dead concept, deliberately separately.
+--
+-- Irreversible: the column and its data go. That is acceptable because no value in it has ever
+-- meant anything, and the rows that exist are development and test hunters.
+alter table hunter drop column plan;

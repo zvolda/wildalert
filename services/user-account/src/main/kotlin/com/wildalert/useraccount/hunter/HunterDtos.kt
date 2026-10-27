@@ -18,16 +18,12 @@ data class RegisterHunterRequest(
     @field:NotBlank
     @field:Pattern(regexp = E164, message = "must be E.164 format, e.g. +420123456789")
     val phone: String,
-
-    val plan: Plan = Plan.FREE,
 )
 
 /** Body for PUT /api/hunters/{id} — every field optional; only provided ones change. */
 data class UpdateHunterRequest(
     @field:Pattern(regexp = E164, message = "must be E.164 format, e.g. +420123456789")
     val phone: String? = null,
-
-    val plan: Plan? = null,
 
     val active: Boolean? = null,
 )
@@ -37,7 +33,6 @@ data class HunterResponse(
     val id: UUID,
     val email: String,
     val phone: String,
-    val plan: Plan,
     val active: Boolean,
     // Where the hunter forwards trail-cam emails (or points the camera).
     val inboundAddress: String,
@@ -49,7 +44,6 @@ data class HunterResponse(
             id = h.id!!,
             email = h.email,
             phone = h.phone,
-            plan = h.plan,
             active = h.active,
             inboundAddress = inboundAddress,
             createdAt = h.createdAt!!,

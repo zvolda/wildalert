@@ -45,7 +45,6 @@ export function forSubmission(request: RegisterHunterRequest): RegisterHunterReq
   return {
     email: request.email.trim(),
     phone: request.phone.trim(),
-    plan: request.plan,
   }
 }
 

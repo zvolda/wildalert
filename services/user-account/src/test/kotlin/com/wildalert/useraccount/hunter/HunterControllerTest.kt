@@ -33,7 +33,7 @@ class HunterControllerTest {
         val id = UUID.randomUUID()
         // The controller deserializes the JSON into an equal RegisterHunterRequest
         // (data class equality), so Mockito matches this exact value.
-        val expectedRequest = RegisterHunterRequest("hunter@example.com", "+420123456789", Plan.FREE)
+        val expectedRequest = RegisterHunterRequest("hunter@example.com", "+420123456789")
         given(service.register(expectedRequest)).willReturn(sampleHunter(id))
 
         mockMvc.postJson("""{"email":"hunter@example.com","phone":"+420123456789","plan":"FREE"}""")
@@ -106,7 +106,7 @@ class HunterControllerTest {
         perform(post("/api/hunters").contentType(MediaType.APPLICATION_JSON).content(body))
 
     private fun sampleHunter(id: UUID): Hunter {
-        val hunter = Hunter("hunter@example.com", "+420123456789", Plan.FREE, active = true)
+        val hunter = Hunter("hunter@example.com", "+420123456789", active = true)
         // id and timestamps are normally set by Hibernate; set them here for the response.
         ReflectionTestUtils.setField(hunter, "id", id)
         ReflectionTestUtils.setField(hunter, "inboundToken", "7f3k9qabcdef")
