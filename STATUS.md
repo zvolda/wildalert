@@ -1110,8 +1110,9 @@ and is switched on by the next.
   gateway deploys — see slice 2.
 - **8 — React frontend** — slice 1 (registration UI) and slice 2 (the gateway that serves it)
   built and tested, plus the detection-history service behind the eventual dashboard; all above.
-  Still to do: deploy the gateway, see the UI in a browser, phone verification, the dashboard
-  itself, presigned photo URLs and auth.
+  Still to do: deploy the gateway, see the UI in a browser, **password login + an account page
+  showing the inbound address and the credit balance** (requested 2026-10-29), phone verification,
+  the dashboard itself, presigned photo URLs and auth.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions
@@ -1128,6 +1129,13 @@ and is switched on by the next.
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
+- **No login — the account is write-once (requested 2026-10-29, Phase 8).** A hunter registers
+  with email + phone, sees their inbound address and credit on the screen after the form, and can
+  never get back to either: there is no password, no session and no account page. The data is
+  already there (`HunterResponse.inboundAddress`, `.creditBalanceMinor`); what is missing is a
+  password at signup, `POST /api/sessions`, and a `GET /api/me` at the gateway that resolves the
+  hunter from the session cookie instead of trusting an id in the URL. See ROADMAP Phase 8,
+  "Password signup + login + account page".
 - **Inbound email webhook written but never run:** matching by recipient is done (slice 5) and
   the Email Worker now exists (`deploy/email-worker/`), but it cannot be deployed until
   email-ingestion has a Cloud Run URL. `message.to` (the SMTP envelope recipient) is what it

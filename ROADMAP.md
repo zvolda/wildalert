@@ -333,6 +333,30 @@ then the async flow, then deploy, then scale.
 - **Tasks:**
   - [ ] Hunter signup + phone verification
         — *signup form built in slice 1 (`web/`); phone verification still to do*
+  - [ ] **Password signup + login + account page** — *wanted (noted 2026-10-29), not built.*
+        Registration asks only for email + phone today and there is no way back in: the inbound
+        address and the credit balance appear once, on the screen that follows the form, and are
+        then unreachable. Wanted: a **password at signup**, a **login form**, and a logged-in
+        **account page** showing (a) the personal inbound address to forward photos to and
+        (b) the remaining credit. `GET /api/hunters/{id}` already returns both
+        (`inboundAddress`, `creditBalanceMinor`), so the data exists — only the identity layer
+        is missing.
+        *Shape to settle when we build it:*
+        - **Where the password lives:** `user-account`, which already owns hunters — a
+          `password_hash` column (Flyway V5) hashed with **BCrypt** (`spring-security-crypto`).
+          Verification stays behind `POST /api/sessions`; the hash never leaves the service.
+        - **How the session is carried:** an **HttpOnly, Secure, SameSite=Lax cookie minted by
+          the gateway** is the cheap first cut — the gateway is already the only component
+          holding a Google ID token, and a cookie keeps credentials out of JavaScript entirely
+          (no `localStorage`). The alternative, a JWT the React app stores and sends, looks more
+          conventional but puts a bearer token in the browser and drags in refresh handling.
+        - **What the gateway exposes:** still no wildcard under `/api/hunters` (see `ApiRoutes`
+          and its comment). Add `POST /api/sessions`, `DELETE /api/sessions`, and a
+          **`GET /api/me`** that resolves the hunter from the cookie — *not* a passthrough of
+          `GET /api/hunters/{id}`, which would let any logged-in hunter read another's phone
+          number by changing the id in the URL.
+        - **Also unblocks** the dashboard and the detection-history read API below, which today
+          have nothing identifying a hunter except the inbound address.
   - [x] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
         or entering it directly in the camera app) — slice 1, shown right after registering
   - [x] **Detection History service** (Kotlin/Spring Boot + Postgres): consume
@@ -353,13 +377,16 @@ then the async flow, then deploy, then scale.
   - [ ] Dashboard: detection history, photos, species
   - [ ] Show photos via **S3 presigned URLs** (bucket stays private)
   - [ ] Plan/subscription management
-- **DoD (review against):** a hunter can self-register, verify their phone, and see history.
+- **DoD (review against):** a hunter can self-register, verify their phone, **log back in with
+  their password**, and see their inbound address, credit balance and detection history.
 
 ### Phase 9 — Scale & Production Readiness (later)
 - **Goal / learn:** auth, billing, scaling to thousands.
 - **Deliverable:** a monetizable, scalable product.
 - **Tasks:**
-  - [ ] Authentication/authorization for users
+  - [ ] Authentication/authorization for users — the first cut is the password login +
+        account page in Phase 8; what belongs here is the hardening: password reset by email,
+        rate limiting / lockout on the login endpoint, and optional social sign-in.
   - [ ] Billing (Stripe) tied to SMS usage
   - [ ] GPU inference option for burst volume
   - [ ] Monitoring/observability, load testing to "thousands of users"
