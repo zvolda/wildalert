@@ -286,6 +286,28 @@ Set HTTP probes from the **console** Health checks form instead, or run the depl
 which does no conversion. This applies to every `gcloud` flag whose value begins with `/`, so the
 recognition and notification deploys hit it identically.
 
+**PowerShell splits an unquoted comma on a `gcloud` flag value, and the shell you escape to for the
+probe is where this one bites.** `--update-env-vars=A=1,B=2` is parsed by PowerShell as an *array*
+`A=1`, `B=2`, which it hands over **space-joined**, so gcloud sees one assignment whose value
+carries the second one inside it. Observed on 2026-10-29 deploying the recognition charge:
+`USER_ACCOUNT_BASE_URL` came out as
+`https://user-account-lznkorfm4q-ey.a.run.app USER_ACCOUNT_AUTH=gcp-id-token` and
+`USER_ACCOUNT_AUTH` **did not exist** — one dead revision (`recognition-00004-x6z`). Nothing fails
+loudly: the deploy succeeds, the revision serves traffic, and the service is simply misconfigured.
+The fix is to quote the whole value —
+`--update-env-vars="A=1,B=2"` — and then **read the variables back off the template** rather than
+trusting the command:
+
+```bash
+gcloud run services describe recognition --region europe-west3 \
+  --format="value(spec.template.spec.containers[0].env)"
+```
+
+Like the mangled probe, a wrong value **persists on the service template**: re-deploying overwrites
+only the keys you set again, so a stray key needs `--remove-env-vars`. The two traps are mirror
+images — Git Bash mangles leading slashes, PowerShell mangles commas — so whichever shell you pick,
+read the result back.
+
 **Flyway fails with a permission error on the `public` schema.** PostgreSQL 15 removed the default
 `CREATE` grant on `public`, so whether the `wildalert` user can create tables depends on it
 inheriting the database owner's rights through Cloud SQL's `cloudsqlsuperuser` role — which is why
@@ -368,15 +390,24 @@ deployed.
   deployed, both push subscriptions exist, and a real emailed photo produced an SMS nine seconds
   later. `image.received.inspect`, the pull subscription used to read events while there was no
   consumer, was deleted the same day; recognition's own log now shows what it received.
-- **A new recognition revision for credit slice 4, and one grant.** Since that slice recognition
-  charges `RECOGNITION_DEBIT` (100 haléře) per photo before the model runs, which needs
-  `USER_ACCOUNT_BASE_URL` + `USER_ACCOUNT_AUTH=gcp-id-token` on the service and
-  `roles/run.invoker` on **user-account** for `wildalert-recognition` — a grant it does not hold
-  yet. Deploy the image **before or with** those: a revision that cannot reach user-account
-  dead-letters every photo after five attempts while looking perfectly healthy. Step 10f in
-  `CONSOLE.md` has the exact values. The running revision (`recognition-00003-fl9`) predates the
-  charge, so until this is done nothing charges for inference and the 2500 trial buys sixteen
-  alerts instead of ten.
+- **`roles/run.invoker` on user-account for `wildalert-recognition`** — the last piece of credit
+  slice 4, and **the pipeline is broken until it lands**. The revision carrying the charge
+  (`recognition-00005-5vt`, image `recognition:8736653`) went live on 2026-10-29 and *does* call
+  user-account now, so without the grant Cloud Run answers **403 in front of the app** — not the
+  404 the client maps to "no hunter" — and every photo is retried five times and dead-lettered
+  while the service looks perfectly healthy. The one command:
+
+  ```bash
+  gcloud run services add-iam-policy-binding user-account --region=europe-west3 \
+    --member="serviceAccount:wildalert-recognition@wildalert-prod.iam.gserviceaccount.com" \
+    --role="roles/run.invoker"
+  ```
+
+  Allow a minute for IAM to propagate before testing; a 403 one minute old is usually propagation
+  rather than a wrong grant (observed in step 10e). Rolling back to the pre-charge revision is
+  `gcloud run services update-traffic recognition --region=europe-west3 --to-revisions=recognition-00003-fl9=100`
+  if the grant has to wait. **Still owed either way: one real emailed photo**, charged end to end,
+  with the ledger showing the `RECOGNITION_DEBIT` next to the `SMS_DEBIT` under the same event id.
 - **`roles/run.invoker` on user-account for notification**, once it exists (email-ingestion's is
   part of its own deploy).
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
