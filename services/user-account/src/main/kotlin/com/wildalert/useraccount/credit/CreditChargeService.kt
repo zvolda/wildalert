@@ -11,8 +11,8 @@ import java.util.UUID
  * Takes money off a hunter's balance for one event, exactly once, in one transaction.
  *
  * This is the piece the whole feature rests on, so the ordering below is deliberate and the
- * comments say why. Nothing calls it yet — `notification` and `recognition` arrive in later
- * slices.
+ * comments say why. `notification` calls it for every alert it sends (`SMS_DEBIT`);
+ * `recognition` will charge its own `RECOGNITION_DEBIT` per photo in a later slice.
  *
  * **Three properties it has to have:**
  *

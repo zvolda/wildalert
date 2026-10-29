@@ -14,14 +14,14 @@ import java.util.UUID
  * Resolve a hunter and charge them for one event, in a single call.
  *
  * **One call, not two, on purpose.** The caller (`notification`, and later `recognition`) needs
- * the phone number *and* permission to send. Splitting it would double the cold-start exposure on
+ * the phone number *and* permission to send. `notification` has called it since credit slice 3. Splitting it would double the cold-start exposure on
  * a scaled-to-zero service and introduce a state nobody wants: looked-up-but-not-charged. It also
  * lets the "may this hunter be texted?" decision be made inside the transaction that holds the
  * money, which is the only place it can be made without a race.
  *
  * **These endpoints return a phone number and must never be proxied by the gateway.** They sit
  * alongside `by-email`, `by-inbound-address` and `GET /api/hunters/{id}` on that list;
- * `ApiRoutes.kt`'s comment names them. Nothing calls these yet.
+ * `ApiRoutes.kt`'s comment names them.
  *
  * A charge is not idempotent by accident — it is keyed on the event id, so calling it twice is
  * safe and expected. See [CreditChargeService].

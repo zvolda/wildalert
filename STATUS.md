@@ -1104,6 +1104,88 @@ and is switched on by the next.
     the gateway is now deployable as-is, with the grant switched on later behind Turnstile or a
     Cloudflare rate-limit rule.
 
+- **Slice 3 (2026-10-29): notification charges, so credit finally does something.** Until this,
+  the ledger and the charge endpoint existed but **nothing called them** — a balance of 0 and a
+  balance of 2500 behaved identically end to end, because `HunterClient` still used the plain
+  `by-inbound-address` lookup. Slice 2b's claim that a zero grant stops an inference was true of
+  the endpoint called directly by `curl`, not of the pipeline. It is true of the pipeline now.
+  - **The two lookups are gone, replaced by two charge calls.** `chargeByInboundAddress` and
+    `chargeById` POST to `…/charges`; `HunterContact` became `HunterCharge`, which carries the
+    outcome, the balance and the notice alongside the phone number. There is no longer a point in
+    the flow where we know who the hunter is but not whether this alert is paid for — one call
+    answers both, inside the transaction holding the money.
+  - **`payable` is a property on `HunterCharge`, not a check at the call site.** `CHARGED` and
+    `ALREADY_CHARGED` both mean send. Reading `ALREADY_CHARGED` as a failure is the easiest
+    mistake to make against this contract and it would silence **every redelivered alert**, so the
+    rule lives in one place with the reason attached.
+  - **The charge comes before the claim, and that ordering is the slice.** A claim can only exist
+    because an earlier attempt got past the charge for the same `sourceEventId`, so that attempt
+    would answer `ALREADY_CHARGED` having moved nothing — charging first is safe. The reverse is
+    not: claim first and a charge that throws (cold user-account, 403, read timeout) has *eaten*
+    the event, and the redelivery that should have rescued the alert finds it handled and stays
+    silent. Same lesson as slice 13's, one call further down. Two tests pin it.
+  - **A refusal writes nothing and claims nothing.** `INSUFFICIENT`/`INACTIVE` answer the push
+    **200** — redelivering would only produce the same refusal — and deliberately leave the source
+    id unclaimed. A failed *send* still releases the claim, but **not** the charge: the retry reads
+    `ALREADY_CHARGED` and sends. One alert, charged once, however many attempts it took.
+  - **Strict on the outcome, lenient on the notice — deliberately asymmetric.** An unknown
+    `outcome` throws: guessing `CHARGED` sends an SMS nobody paid for, guessing `INSUFFICIENT`
+    swallows one that was paid for, so failing loudly into the DLT is the only honest answer. An
+    unknown `notice` maps to `NONE` with a warning, because a notice user-account learns later is
+    an additive change that must never cost an alert. Not knowing what to *add* to a message is
+    survivable; not knowing whether we may *send* it is not.
+  - **The warning rides along on the alert instead of costing its own SMS.** user-account only
+    returns a notice on a *successful* charge, so whenever there is something to say there is
+    already a message going out to say it on — otherwise we would pay for an SMS telling someone
+    they have run out of SMS credit. `SmsPolicy` appends " Credit low: 4.00 CZK left." or
+    " Credit used up - no more alerts until you top up.", ASCII only, and a test pins the longest
+    possible combination at **≤160 characters** so the warning never splits the message into two
+    paid segments.
+  - **The price lives in notification** (`billing.sms-cost-minor`, `SMS_COST_MINOR`, default
+    **150**) because this is the service that knows what an SMS costs. Default 150 is safe here and
+    is the **opposite** call to the signup grant's default of 0, for the opposite reason: forgetting
+    the grant must give nothing away, while forgetting the price must still charge. `@Min(1)` on
+    the endpoint means a 0 fails loudly rather than running free. `SmsCostDefaultTest` pins it.
+  - **The free trial is switched on for local dev only, and that is not timidity.** `compose.yml`
+    now sets `SIGNUP_GRANT_MINOR=2500` for user-account — 25 CZK, ten alerts with their recognition
+    at 100 + 150. `application.yml` still defaults to **0** and `SignupGrantDefaultTest` still pins
+    that. **Do not set it on the Cloud Run revision yet:** the gateway is live and
+    `gateway-lznkorfm4q-ey.a.run.app` is publicly reachable, which the site slice records as
+    tolerable *only* because the grant is 0. Any edge rule on `wildalert.app` is walked around by
+    calling that URL directly, so Turnstile (or closing the origin with `x-origin-secret`) is the
+    gate, and it comes first. The grant is one env var the day it does.
+  - **Verified live, end to end, on a real hunter through the real push endpoint.** Registration
+    returned `creditBalanceMinor: 2500`; one pushed `AnimalRecognized` → **204**, `[FAKE SMS]`
+    sent, balance **2350**, and a `SMS_DEBIT` of -150 in the ledger keyed on the event's
+    `sourceEventId`. Then 16 more pushes drained it: 2200, 2050 … 400, 250, 100, and the 17th →
+    **`INSUFFICIENT`, no SMS, no ledger row** (16 debits for 17 pushes). The low-balance warning
+    appeared **exactly once**, on the alert that crossed 500 ("Credit low: 4.00 CZK left."), and on
+    neither of the two alerts after it — the `warning_level` claim working. `balance_minor` (100)
+    equalled the ledger sum (100) after all of it, so the cache-is-a-cache invariant survived 17
+    charges.
+  - **The best result came from restarting notification and redelivering the first event.** With
+    the in-memory claim cleared and the hunter now holding **100 — less than the 150 price** — the
+    redelivered alert **still went out**, logged `charged=ALREADY_CHARGED`, the balance stayed at
+    100 and no 17th debit appeared. That is the fast-path ledger lookup preceding the balance
+    check, and it is the property that matters most: an alert already paid for is never lost
+    because the hunter has since run dry.
+  - **A finding, not a bug, and worth a later slice: `OUT_OF_CREDIT` is practically unreachable.**
+    `noticeFor` raises it on `balanceAfter <= 0`, which needs the balance to land on *exactly* 0 —
+    and 2500 is not a multiple of 150, so this hunter went 100 → `INSUFFICIENT` without ever being
+    told "credit used up". `warning_level` stopped at 1. The hunter is not left in silence (the
+    low-balance warning fires at ≤500, about three alerts out), but the out-of-credit message will
+    almost never be seen. `balanceAfter < smallest chargeable amount` would be the honest test.
+    Left alone here because it is user-account's logic, not this slice's.
+  - **The trial buys 16 alerts today, not 10.** Only `SMS_DEBIT` (150) is charged so far; it
+    becomes exactly ten once `recognition` charges its `RECOGNITION_DEBIT` of 100 per photo, which
+    is the next slice. The 2500 figure is already right for the end state.
+  - **Tests:** 196 Kotlin across the repo (notification 45 → 67), 0 failures; full `./gradlew build`
+    green with Postgres up.
+  - **A harness trap worth remembering:** a hand-built Pub/Sub envelope from PowerShell's
+    `ConvertTo-Json` was rejected **400** by the push endpoint, which looks exactly like a service
+    bug. It was not — nested `ConvertTo-Json` mangled the payload, and building the JSON by string
+    concatenation gave 204 immediately. When a local probe fails, suspect the probe first.
+
 - **The site on `wildalert.app` (2026-10-29): a Cloudflare Worker, because Cloud Run cannot map
   the domain here.** The gateway went up the same day (`gateway-00001-p5f`, SA
   `wildalert-gateway@`, image `:a2bd22f`) and serves the registration form on its `run.app` URL;

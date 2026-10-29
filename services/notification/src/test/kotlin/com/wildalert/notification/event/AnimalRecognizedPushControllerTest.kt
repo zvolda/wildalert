@@ -31,6 +31,7 @@ class AnimalRecognizedPushControllerTest {
             mock(HunterClient::class.java),
             mock(SmsSender::class.java),
             InMemoryProcessedEvents(),
+            smsCostMinor = 150,
         ) {
         val received = mutableListOf<AnimalRecognized>()
         var failWith: RuntimeException? = null
