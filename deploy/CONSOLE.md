@@ -786,8 +786,17 @@ connection attached**, and for `wildalert-notification`: `roles/cloudsql.client`
 accessor binding on `wildalert-db-password`. Flyway creates its own `notification` schema with its
 own history, so it will not collide with user-account's migrations.
 
-**Grants:** `roles/run.invoker` on **user-account** for `wildalert-notification` (the lookup), and
-`roles/run.invoker` on **notification** for `wildalert-pubsub-push` (the push).
+**Grants:** `roles/run.invoker` on **user-account** for `wildalert-notification` (the lookup, which
+since credit slice 3 is also the charge), and `roles/run.invoker` on **notification** for
+`wildalert-pubsub-push` (the push).
+
+**Credit, live since `notification-00006-qct` (2026-10-29, image `notification:8736653`).** The
+lookup is now a charge: an alert debits `SMS_DEBIT` 150 haléře and is not sent if the hunter cannot
+pay. Nothing to configure — `SMS_COST_MINOR` defaults to 150, the documented price, because
+forgetting a *price* must still charge (the opposite default to `SIGNUP_GRANT_MINOR`, where
+forgetting it must give nothing away). A hunter whose balance is between 100 and 249 pays for the
+recognition and gets no SMS and no warning; that is the stranded-balance gap recorded in
+`STATUS.md`, and it is user-account's to close.
 
 ### Sending real SMS: GoSMS, not Twilio
 
@@ -884,6 +893,11 @@ the R2 secrets and the service account, and **no `--startup-probe` flag** goes a
 there is no way to switch charging off. The startup log is the proof the revision carries the charge
 code: `recognition.credit: Calls to user-account will carry a Google ID token for audience
 https://user-account-lznkorfm4q-ey.a.run.app`.
+
+**Verified on a real emailed photo the same day:** the charge call answered `HTTP/1.1 200 OK` and
+the log read `Charged hunter a87cf72a-… 100 haléře … (CHARGED), balance 2400`, followed by
+`species=wild boar confidence=1.00`. Email to SMS took 93 seconds, 75 of them recognition's cold
+start.
 
 **Why both variables matter.** Since credit slice 4 every pushed photo is charged
 `RECOGNITION_DEBIT` (100 haléře) *before* the model runs, so a revision without them cannot charge:

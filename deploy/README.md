@@ -390,24 +390,22 @@ deployed.
   deployed, both push subscriptions exist, and a real emailed photo produced an SMS nine seconds
   later. `image.received.inspect`, the pull subscription used to read events while there was no
   consumer, was deleted the same day; recognition's own log now shows what it received.
-- **`roles/run.invoker` on user-account for `wildalert-recognition`** — the last piece of credit
-  slice 4, and **the pipeline is broken until it lands**. The revision carrying the charge
-  (`recognition-00005-5vt`, image `recognition:8736653`) went live on 2026-10-29 and *does* call
-  user-account now, so without the grant Cloud Run answers **403 in front of the app** — not the
-  404 the client maps to "no hunter" — and every photo is retried five times and dead-lettered
-  while the service looks perfectly healthy. The one command:
+- ~~**`roles/run.invoker` on user-account for `wildalert-recognition`**~~ — **granted 2026-10-29**,
+  and with it the credit feature is live and proven end to end. The policy on `user-account` now
+  lists `wildalert-gateway`, `wildalert-notification` and `wildalert-recognition`.
 
-  ```bash
-  gcloud run services add-iam-policy-binding user-account --region=europe-west3 \
-    --member="serviceAccount:wildalert-recognition@wildalert-prod.iam.gserviceaccount.com" \
-    --role="roles/run.invoker"
-  ```
+  Three revisions carry it: `recognition-00005-5vt`, `user-account-00004-pgg` and
+  `notification-00006-qct`, all on image tag `8736653`. A real emailed photo went
+  **email → SMS in 93 seconds** charging **2500 → 2400 → 2250** (`RECOGNITION_DEBIT` 100 then
+  `SMS_DEBIT` 150 under the same `sourceEventId`), with the charge call answering `200 OK` rather
+  than 403 and nothing dead-lettered. See `STATUS.md` for the timestamped run.
 
-  Allow a minute for IAM to propagate before testing; a 403 one minute old is usually propagation
-  rather than a wrong grant (observed in step 10e). Rolling back to the pre-charge revision is
-  `gcloud run services update-traffic recognition --region=europe-west3 --to-revisions=recognition-00003-fl9=100`
-  if the grant has to wait. **Still owed either way: one real emailed photo**, charged end to end,
-  with the ledger showing the `RECOGNITION_DEBIT` next to the `SMS_DEBIT` under the same event id.
+  Kept for the next time this is touched: the grant must exist **before** a charging revision takes
+  traffic, because without it Cloud Run answers **403 in front of the app** — not the 404 the client
+  maps to "no hunter" — so every photo is retried five times and dead-lettered while the service
+  looks perfectly healthy. Allow a minute for IAM to propagate before testing (a 403 one minute old
+  is usually propagation, not a wrong grant — observed in step 10e), and the escape hatch is
+  `gcloud run services update-traffic recognition --region=europe-west3 --to-revisions=<pre-charge-revision>=100`.
 - **`roles/run.invoker` on user-account for notification**, once it exists (email-ingestion's is
   part of its own deploy).
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
