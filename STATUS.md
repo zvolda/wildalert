@@ -1315,11 +1315,31 @@ and is switched on by the next.
     so the change is deliberate.
   - **Tests:** 200 Kotlin (user-account 48 → 54) and **63 Python** (was 34), 0 failures.
     `./gradlew build` green with Postgres up.
-  - **Not deployed.** The running revision predates the charge and needs
-    `USER_ACCOUNT_BASE_URL`/`USER_ACCOUNT_AUTH` plus `roles/run.invoker` on user-account for
-    `wildalert-recognition`, which it does not hold. Deploy the image before or with those: a
-    revision that cannot reach user-account dead-letters every photo after five attempts while
-    looking healthy. `CONSOLE.md` step 10f carries the values and the warning.
+  - **Deployed the same day: `recognition-00005-5vt`, image `recognition:8736653`** (built by the
+    `recognition-main` trigger off the merge commit). Both variables were read back off the service
+    template rather than trusted to the command line, and the startup log is the proof the charge
+    code is the code running: `recognition.credit: Calls to user-account will carry a Google ID
+    token for audience https://user-account-lznkorfm4q-ey.a.run.app`, with the model loaded before
+    traffic as usual.
+  - **One grant still missing, and it is not cosmetic: `roles/run.invoker` on user-account for
+    `wildalert-recognition`.** This session's permission classifier refused the binding (`Permission
+    Grant`), exactly as in Phase 6 slice 6 — so it has to be run by hand. Until it is, the deployed
+    revision *does* call user-account and gets **403 in front of the app**, which is not the 404
+    the client maps to "no hunter", so every photo is retried five times and dead-lettered while
+    the service looks healthy. The command and a one-line traffic rollback to the pre-charge
+    revision are in `deploy/README.md`. **Nothing is lost in that window** — the image stays in R2
+    and the event in `image.received.dlt` — but the hunter gets no SMS.
+  - **A new shell trap, the mirror image of the Git Bash one, and it cost revision
+    `recognition-00004-x6z`.** PowerShell parses an unquoted comma in
+    `--update-env-vars=A=1,B=2` as an *array* and hands it to gcloud **space-joined**, so
+    `USER_ACCOUNT_BASE_URL` arrived as
+    `https://user-account-lznkorfm4q-ey.a.run.app USER_ACCOUNT_AUTH=gcp-id-token` and
+    `USER_ACCOUNT_AUTH` did not exist at all. Nothing fails loudly: the deploy succeeds and the
+    revision serves traffic misconfigured. Quoting the whole value fixes it. So: Git Bash mangles
+    leading slashes, PowerShell mangles commas — **read the variables back off the template
+    whichever shell you use.** Written up under *Troubleshooting* in `deploy/README.md`.
+  - **Still owed: one real emailed photo** charged end to end, with the ledger showing the
+    `RECOGNITION_DEBIT` beside the `SMS_DEBIT` under the same event id. It needs the grant first.
   - **A pre-existing trap noticed in passing:** `services/recognition/Dockerfile.local`, which
     `compose.yml`'s local profile builds, is matched by `.gitignore`'s `*.local` and has therefore
     never been committed. `docker compose --profile local up` cannot work from a fresh clone. Not

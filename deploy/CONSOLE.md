@@ -867,12 +867,29 @@ load before anything is served.
 | `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` (no trailing slash; it is also the token audience) |
 | `USER_ACCOUNT_AUTH` | `gcp-id-token` |
 
-**The last two are new in credit slice 4 and the running revision does not have them.** Since that
-slice every pushed photo is charged `RECOGNITION_DEBIT` (100 haléře) *before* the model runs, so a
-revision without them cannot charge: the call goes to `http://localhost:8081`, the connection is
-refused, the push answers 500 and **every photo is retried five times and dead-lettered**. The
-service looks healthy and classifies nothing. `RECOGNITION_COST_MINOR` is deliberately left unset —
-100 is the documented price and the default, and there is no way to switch charging off.
+**Both were added on 2026-10-29** in revision `recognition-00005-5vt` (image `recognition:8736653`),
+with this one command — **note the quotes, they are not optional**, because PowerShell splits an
+unquoted comma and merges the two variables into one (see *Troubleshooting* in `README.md`; it cost
+revision `00004-x6z`):
+
+```powershell
+gcloud run deploy recognition --region=europe-west3 `
+  --image=europe-west3-docker.pkg.dev/wildalert-prod/wildalert/recognition:8736653 `
+  --update-env-vars="USER_ACCOUNT_BASE_URL=https://user-account-lznkorfm4q-ey.a.run.app,USER_ACCOUNT_AUTH=gcp-id-token"
+```
+
+Nothing else is passed: an in-place update keeps the 8 GiB, 2 vCPU, concurrency 1, the 600s timeout,
+the R2 secrets and the service account, and **no `--startup-probe` flag** goes anywhere near it.
+`RECOGNITION_COST_MINOR` is deliberately unset — 100 is the default and the documented price, and
+there is no way to switch charging off. The startup log is the proof the revision carries the charge
+code: `recognition.credit: Calls to user-account will carry a Google ID token for audience
+https://user-account-lznkorfm4q-ey.a.run.app`.
+
+**Why both variables matter.** Since credit slice 4 every pushed photo is charged
+`RECOGNITION_DEBIT` (100 haléře) *before* the model runs, so a revision without them cannot charge:
+the call goes to `http://localhost:8081`, the connection is refused, the push answers 500 and
+**every photo is retried five times and dead-lettered**. The service looks healthy and classifies
+nothing.
 
 **Grant before that revision goes live:** `roles/run.invoker` on **user-account** for
 `wildalert-recognition`, which it does not hold yet (user-account's policy currently lists
