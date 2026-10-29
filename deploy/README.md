@@ -96,7 +96,11 @@ else. **Set no `SIGNUP_GRANT_MINOR` on this service**; unset is the intended con
 the grant on later, once Cloudflare Turnstile or a rate-limit rule is in front of the form. See
 `CONSOLE.md` step 10h.
 
-### `wildalert.app` — the Cloudflare Worker in front of the gateway (not yet deployed)
+### `wildalert.app` — the Cloudflare Worker in front of the gateway (deployed, DNS pending)
+
+**Worker deployed 2026-10-29** (version `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`) with both routes
+attached. **The site is not live yet**: the apex still has no A/AAAA record, so nothing resolves
+and the routes never fire. The two proxied `AAAA → 100::` records are the switch.
 
 | Setting | Value |
 |---|---|
@@ -369,9 +373,9 @@ deployed.
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
   it, and set `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. No tokens need regenerating —
   only the token is stored, the domain comes from config. **All done 2026-10-20.**
-- **The site on `wildalert.app`**: two proxied AAAA records and `wrangler deploy` in
-  `deploy/site-worker/`. The gateway itself went up on 2026-10-29 (`gateway-00001-p5f`) and
-  answers on its `run.app` URL; only the domain in front of it is outstanding. `CONSOLE.md`
-  step 11c.
+- **The site on `wildalert.app`**: the worker is **deployed** (2026-10-29) and the gateway went up
+  the same day (`gateway-00001-p5f`). **What is left is two proxied `AAAA → 100::` records and two
+  SSL toggles**, both dashboard-only — `wrangler` has no DNS command and its stored OAuth token is
+  `zone:read`, so neither can be scripted with it. `CONSOLE.md` step 11c.
 
 The broker decision is **settled**: Cloud Pub/Sub push, Kafka removed from the repo (2026-10-08).

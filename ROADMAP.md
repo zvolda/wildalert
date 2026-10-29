@@ -333,8 +333,10 @@ then the async flow, then deploy, then scale.
 - **Tasks:**
   - [ ] Hunter signup + phone verification
         — *signup form built in slice 1 (`web/`); phone verification still to do*
-  - [~] **The site on `wildalert.app`** — `deploy/site-worker/` written 2026-10-29; needs two
-        proxied `AAAA → 100::` records and `npx wrangler deploy`. **A Cloudflare Worker, because
+  - [~] **The site on `wildalert.app`** — `deploy/site-worker/` written **and deployed**
+        2026-10-29 (both routes attached); what remains is the two proxied `AAAA → 100::` records
+        that switch it on, plus the SSL toggles — dashboard-only, since `wrangler` has no DNS
+        command and its token is `zone:read`. **A Cloudflare Worker, because
         Cloud Run routes by Host header and its domain mapping does not exist in `europe-west3`**
         (and is preview-only where it does); Cloudflare's native host-header override is
         Enterprise-only, and the load balancer Google recommends costs ~€18–20/month to rewrite
