@@ -1321,14 +1321,22 @@ and is switched on by the next.
     code is the code running: `recognition.credit: Calls to user-account will carry a Google ID
     token for audience https://user-account-lznkorfm4q-ey.a.run.app`, with the model loaded before
     traffic as usual.
-  - **One grant still missing, and it is not cosmetic: `roles/run.invoker` on user-account for
-    `wildalert-recognition`.** This session's permission classifier refused the binding (`Permission
-    Grant`), exactly as in Phase 6 slice 6 — so it has to be run by hand. Until it is, the deployed
-    revision *does* call user-account and gets **403 in front of the app**, which is not the 404
-    the client maps to "no hunter", so every photo is retried five times and dead-lettered while
-    the service looks healthy. The command and a one-line traffic rollback to the pre-charge
-    revision are in `deploy/README.md`. **Nothing is lost in that window** — the image stays in R2
-    and the event in `image.received.dlt` — but the hunter gets no SMS.
+  - **`roles/run.invoker` on user-account for `wildalert-recognition` — granted** (by hand: this
+    session's permission classifier refused the binding, `Permission Grant`, exactly as in Phase 6
+    slice 6). That policy now lists gateway, notification and recognition. It was the one thing
+    between the deployed revision and a working pipeline: recognition *does* call user-account now,
+    and without the grant Cloud Run answers **403 in front of the app** — not the 404 the client
+    maps to "no hunter" — so every photo would have been retried five times and dead-lettered
+    while the service looked healthy.
+  - **Two more revisions went out, because the slice was only half-live without them.**
+    user-account was still on `a2bd22f`, which **predates `canDeliverNotice` and silently drops it**
+    (Spring's Jackson ignores unknown properties), so it would have claimed the credit warning on
+    recognition's charge and swallowed it — the very bug this slice fixes.
+    `user-account-00004-pgg` closes that: Flyway validated 4 migrations with none to apply, because
+    the credit tables have been there since slice 1. And notification was still on `e0ddd1d`, from
+    **before credit slice 3**, so alerts were not charged at all; `notification-00006-qct` turns
+    `SMS_DEBIT` on in production (decided 2026-10-29). Prices in the repo and prices in production
+    now agree.
   - **A new shell trap, the mirror image of the Git Bash one, and it cost revision
     `recognition-00004-x6z`.** PowerShell parses an unquoted comma in
     `--update-env-vars=A=1,B=2` as an *array* and hands it to gcloud **space-joined**, so
@@ -1338,8 +1346,30 @@ and is switched on by the next.
     revision serves traffic misconfigured. Quoting the whole value fixes it. So: Git Bash mangles
     leading slashes, PowerShell mangles commas — **read the variables back off the template
     whichever shell you use.** Written up under *Troubleshooting* in `deploy/README.md`.
-  - **Still owed: one real emailed photo** charged end to end, with the ledger showing the
-    `RECOGNITION_DEBIT` beside the `SMS_DEBIT` under the same event id. It needs the grant first.
+  - **Proven in production on a real emailed photo (2026-10-29, 15:20:33 → 15:22:06 UTC), and the
+    two-part price is now real money:**
+    - 15:20:36 stored in R2 (`inbound/2026/10/29/0118ab69-….jpg`, 39172 bytes), 15:20:37
+      `ImageReceived` published
+    - 15:20:38 recognition cold-started, ready 15:21:53 (**75s**), push `attempt=1` 15:21:54
+    - 15:21:56 **the charge call answered `HTTP/1.1 200 OK`, not 403** — the grant and the
+      metadata-server ID token both working against a private service
+    - 15:22:02 **`Charged hunter a87cf72a-… 100 haléře … (CHARGED), balance 2400`**, then
+      `species=wild boar confidence=1.00` published (4 animals detected, 3.7s inference)
+    - 15:22:04 notification `attempt=1` → 15:22:06 **GoSMS accepted for +420774584941
+      (id=47117094037), `charged=CHARGED, balance=2250`**
+
+    So **2500 → 2400 → 2250** on one photo, both debits under the same `sourceEventId`
+    `5f79923a-…`, **email to SMS in 93 seconds**, every hop on first attempt, nothing
+    dead-lettered. The first time a hunter has paid for a recognition.
+  - **A documented claim turns out to be half right, found in this log:** "the model is loaded at
+    startup, not on the first request" holds for **MegaDetector** (`YOLOv9c summary` at 15:21:29,
+    during `lifespan`) but **not for DeepFaune's own weights** — `Model loaded from
+    …/deepfaune-vit_large_patch14_dinov2…v3.pt` is logged at 15:21:56.5, *after* "Application
+    startup complete" (15:21:53) and after the charge call. `DeepFauneClassifier.__init__`
+    constructs both eagerly, so it is PytorchWildlife that defers reading that checkpoint to the
+    first classification. It cost ~3s here against a 600s ack deadline, so it is a note rather than
+    a problem — but the startup probe does **not** cover it, and the first photo on every cold
+    instance pays it.
   - **A pre-existing trap noticed in passing:** `services/recognition/Dockerfile.local`, which
     `compose.yml`'s local profile builds, is matched by `.gitignore`'s `*.local` and has therefore
     never been committed. `docker compose --profile local up` cannot work from a fresh clone. Not
