@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.classifier import Recognition
+from app.credit import Charge, ChargeOutcome, ChargeRequest, get_credit_client
 from app.events import AnimalRecognized
 from app.image_source import ImageNotFoundError, get_image_source
 from app.main import app, get_classifier
@@ -75,6 +76,38 @@ class FailingClassifier:
         raise RuntimeError("model exploded")
 
 
+class FakeCredit:
+    """Stands in for user-account. Charging is on in every environment, so there is no fake default
+    in the service itself — the test supplies this one through the dependency override."""
+
+    def __init__(
+        self,
+        outcome: ChargeOutcome | None = ChargeOutcome.CHARGED,
+        fail_with: Exception | None = None,
+    ) -> None:
+        self.outcome = outcome
+        self.fail_with = fail_with
+        self.charged: list[ChargeRequest] = []
+
+    def charge_by_inbound_address(self, address: str, request: ChargeRequest) -> Charge | None:
+        return self._answer(request)
+
+    def charge_by_id(self, hunter_id, request: ChargeRequest) -> Charge | None:
+        return self._answer(request)
+
+    def _answer(self, request: ChargeRequest) -> Charge | None:
+        if self.fail_with:
+            raise self.fail_with
+        self.charged.append(request)
+        if self.outcome is None:
+            return None
+        return Charge(
+            hunter_id=UUID("bbbbbbbb-0000-4000-8000-000000000002"),
+            outcome=self.outcome,
+            balance_after_minor=2400,
+        )
+
+
 @pytest.fixture
 def source() -> FakeImageSource:
     return FakeImageSource()
@@ -85,10 +118,16 @@ def publisher() -> FakePublisher:
     return FakePublisher()
 
 
+@pytest.fixture
+def credit() -> FakeCredit:
+    return FakeCredit()
+
+
 @pytest.fixture(autouse=True)
-def wire(source: FakeImageSource, publisher: FakePublisher):
+def wire(source: FakeImageSource, publisher: FakePublisher, credit: FakeCredit):
     app.dependency_overrides[get_image_source] = lambda: source
     app.dependency_overrides[get_event_publisher] = lambda: publisher
+    app.dependency_overrides[get_credit_client] = lambda: credit
     yield
     app.dependency_overrides.clear()
 
@@ -106,14 +145,18 @@ def test_recognizes_the_stored_image_and_publishes_the_result(source, publisher)
     assert result.low_confidence is False
 
 
-def test_event_on_no_address_of_ours_has_no_recipient(publisher):
-    # Still classified and published: whether anyone is texted is notification's decision.
+def test_an_event_naming_no_hunter_is_acknowledged_and_not_classified(publisher, source):
+    """It used to be classified and published, with notification declining to text anyone.
+
+    Since the recognition debit there is nobody to charge for it, so it is acked and dropped: mail
+    to a made-up name on our domain costs a storage read and no model run.
+    """
     response = client.post(
         "/events/image-received", json=envelope(image_received(recipient=None))
     )
 
     assert response.status_code == 204
-    assert publisher.published[0].recipient is None
+    assert publisher.published == []
 
 
 def test_invalid_event_is_dead_lettered_without_publishing(publisher):
@@ -135,13 +178,48 @@ def test_data_that_is_not_base64_is_dead_lettered(publisher):
     assert publisher.published == []
 
 
-def test_missing_image_is_reported_as_not_found(publisher, source):
+def test_the_photo_is_charged_for_before_it_is_classified(publisher, credit):
+    client.post("/events/image-received", json=envelope(image_received()))
+
+    assert credit.charged[0].source_event_id == str(SOURCE_EVENT_ID)
+    assert credit.charged[0].amount_minor == 100  # the default price
+    assert credit.charged[0].entry_type == "RECOGNITION_DEBIT"
+    assert len(publisher.published) == 1
+
+
+def test_an_unpaid_photo_is_acknowledged_without_publishing(publisher, credit):
+    """A refusal is not a failure: nothing was written, so a redelivery would only repeat it.
+
+    Acking also keeps the dead-letter topic for messages that really failed, rather than filling
+    it with photos from empty accounts.
+    """
+    credit.outcome = ChargeOutcome.INSUFFICIENT
+
+    response = client.post("/events/image-received", json=envelope(image_received()))
+
+    assert response.status_code == 204
+    assert publisher.published == []
+
+
+def test_a_charge_that_cannot_be_made_is_not_acknowledged(publisher, credit):
+    """A cold or unreachable user-account must cost a redelivery, never the photo."""
+    credit.fail_with = RuntimeError("user-account is cold")
+
+    with pytest.raises(RuntimeError, match="user-account is cold"):
+        client.post("/events/image-received", json=envelope(image_received()))
+
+    assert publisher.published == []
+
+
+def test_missing_image_is_reported_as_not_found(publisher, source, credit):
     source.missing = True
 
     response = client.post("/events/image-received", json=envelope(image_received()))
 
     assert response.status_code == 404
     assert publisher.published == []
+    # No refund path exists, so a photo that cannot be classified is not charged for.
+    assert credit.charged == []
 
 
 def test_a_failing_classifier_returns_500_so_pubsub_redelivers(publisher):

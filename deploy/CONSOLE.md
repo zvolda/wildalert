@@ -864,6 +864,22 @@ load before anything is served.
 | `R2_BUCKET` | `wildalert-images` |
 | `RECOGNITION_EVENTS_PROVIDER` | `pubsub` |
 | `PUBSUB_PROJECT_ID` | `wildalert-prod` |
+| `USER_ACCOUNT_BASE_URL` | `https://user-account-lznkorfm4q-ey.a.run.app` (no trailing slash; it is also the token audience) |
+| `USER_ACCOUNT_AUTH` | `gcp-id-token` |
+
+**The last two are new in credit slice 4 and the running revision does not have them.** Since that
+slice every pushed photo is charged `RECOGNITION_DEBIT` (100 haléře) *before* the model runs, so a
+revision without them cannot charge: the call goes to `http://localhost:8081`, the connection is
+refused, the push answers 500 and **every photo is retried five times and dead-lettered**. The
+service looks healthy and classifies nothing. `RECOGNITION_COST_MINOR` is deliberately left unset —
+100 is the documented price and the default, and there is no way to switch charging off.
+
+**Grant before that revision goes live:** `roles/run.invoker` on **user-account** for
+`wildalert-recognition`, which it does not hold yet (user-account's policy currently lists
+`wildalert-notification` and `wildalert-gateway`). Without it Cloud Run answers **403 in front of
+the app**, which is not a 404, so the same dead-letter outcome applies. Allow a minute for IAM to
+propagate before testing — a 403 one minute old is usually propagation, not a wrong grant
+(observed in step 10e).
 
 Secrets — **Reference a secret**, as env vars: `wildalert-r2-access-key` → `R2_ACCESS_KEY`,
 `wildalert-r2-secret-key` → `R2_SECRET_KEY` (both already carry a per-secret accessor binding for
@@ -879,7 +895,8 @@ comment saying Cloud Run sets it. Cloud Run's documented reserved variables are 
 instead, not from an env var. Setting it explicitly makes the question moot; the first revision's
 logs will settle whether the fallback would ever have worked.
 
-**Grant:** `roles/run.invoker` on **recognition** for `wildalert-pubsub-push`.
+**Grant:** `roles/run.invoker` on **recognition** for `wildalert-pubsub-push`, and (new in credit
+slice 4) `roles/run.invoker` on **user-account** for `wildalert-recognition`.
 
 ---
 

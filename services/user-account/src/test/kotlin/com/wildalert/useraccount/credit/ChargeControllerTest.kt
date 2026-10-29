@@ -103,6 +103,76 @@ class ChargeControllerTest {
         then(charges).shouldHaveNoInteractions()
     }
 
+    @Test
+    fun `the body recognition sends is understood, canDeliverNotice and all`() {
+        // Verbatim what the Python service puts on the wire (app/credit.py, pinned on that side by
+        // test_credit.py). This is the cross-language contract for the recognition debit, in the
+        // same spirit as the AnimalRecognized payload in notification's push controller test:
+        // nothing shares a schema, so the two copies are kept honest by a captured body.
+        val recognitionBody =
+            """{"sourceEventId":"aaaaaaaa-0000-4000-8000-000000000001","amountMinor":100,""" +
+                """"entryType":"RECOGNITION_DEBIT","canDeliverNotice":false}"""
+        val hunter = org.mockito.Mockito.mock(com.wildalert.useraccount.hunter.Hunter::class.java)
+        given(hunters.getByInboundAddress("abc@wildalert.local")).willReturn(hunter)
+        given(
+            charges.charge(
+                hunter,
+                ChargeRequest(
+                    "aaaaaaaa-0000-4000-8000-000000000001",
+                    100,
+                    EntryType.RECOGNITION_DEBIT,
+                    canDeliverNotice = false,
+                ),
+            ),
+        ).willReturn(
+            ChargeResponse(
+                hunterId = UUID.randomUUID(),
+                phone = "+420123456789",
+                active = true,
+                outcome = ChargeOutcome.CHARGED,
+                balanceAfterMinor = 2400,
+                notice = Notice.NONE,
+            ),
+        )
+
+        mockMvc.perform(
+            post("/api/hunters/by-inbound-address/charges")
+                .param("address", "abc@wildalert.local")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(recognitionBody),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.balanceAfterMinor").value(2400))
+    }
+
+    @Test
+    fun `a body without canDeliverNotice means the caller can deliver one`() {
+        // notification's body, which predates the field. Defaulting to true keeps it working and
+        // is right for the service that is sending an SMS anyway.
+        val hunter = org.mockito.Mockito.mock(com.wildalert.useraccount.hunter.Hunter::class.java)
+        val expected = ChargeRequest("evt-1", 250, EntryType.SMS_DEBIT, canDeliverNotice = true)
+        given(hunters.getByInboundAddress("abc@wildalert.local")).willReturn(hunter)
+        given(charges.charge(hunter, expected)).willReturn(
+            ChargeResponse(
+                hunterId = UUID.randomUUID(),
+                phone = "+420123456789",
+                active = true,
+                outcome = ChargeOutcome.CHARGED,
+                balanceAfterMinor = 2250,
+                notice = Notice.LOW_BALANCE,
+            ),
+        )
+
+        mockMvc.perform(
+            post("/api/hunters/by-inbound-address/charges")
+                .param("address", "abc@wildalert.local")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body()),
+        ).andExpect(status().isOk)
+
+        then(charges).should().charge(hunter, expected)
+    }
+
     private fun body() =
         """{"sourceEventId":"evt-1","amountMinor":250,"entryType":"SMS_DEBIT"}"""
 

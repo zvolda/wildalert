@@ -32,6 +32,12 @@ Browser → gateway (Kotlin/Spring Cloud Gateway, the ONLY public service for th
   (logging / pubsub), `Classifier` (stub / deepfaune). New integrations should follow this:
   interface + fake default + real impl gated by a config property, so the app runs with zero
   infra and tests use the fake.
+  - **Money is the exception: no fake, no off switch.** The charge calls to user-account
+    (`HunterClient` in notification, `app/credit.py` in recognition) are always on, because a flag
+    whose absence meant a free SMS or a free DeepFaune run is a hole, not a convenience. Tests
+    supply their own stand-in through the existing injection point. The matching asymmetry in
+    defaults: forgetting the **signup grant** must give nothing away (default 0), forgetting a
+    **price** must still charge (defaults 100 and 150, each pinned by a test).
 - **Config via env vars with defaults**, bound in `application.yml` (`${VAR:default}`) and
   read through `@Value` / `@ConfigurationProperties` (Kotlin) or `os.getenv` (Python).
 - **Events are broker-agnostic JSON** — the transport is **Cloud Pub/Sub**, and the consumers are

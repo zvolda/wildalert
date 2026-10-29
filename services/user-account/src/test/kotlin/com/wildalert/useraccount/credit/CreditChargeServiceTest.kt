@@ -154,6 +154,70 @@ class CreditChargeServiceTest {
     }
 
     @Test
+    fun `a recognition charge does not claim the warning, so the alert still carries it`() {
+        // The interaction this slice has to get right. Recognition charges *first* -- before the
+        // model runs -- so it is usually its debit that crosses the low-balance threshold. It
+        // sends no SMS, so a notice handed to it is not delayed but lost: each warning fires once
+        // per depletion cycle. It therefore asks for none, and the alert's own charge claims it.
+        val hunter = register()
+        val id = hunter.id!!
+        charges.charge(hunter, request(amountMinor = 1900)) // 2500 -> 600, still above 500
+        val photo = "evt-" + UUID.randomUUID()
+
+        val recognition = charges.charge(
+            hunter,
+            ChargeRequest(photo, 100, EntryType.RECOGNITION_DEBIT, canDeliverNotice = false),
+        )
+
+        // 600 - 100 = 500, which is at the threshold -- but nothing was claimed.
+        assertThat(recognition.outcome).isEqualTo(ChargeOutcome.CHARGED)
+        assertThat(recognition.balanceAfterMinor).isEqualTo(500)
+        assertThat(recognition.notice).isEqualTo(Notice.NONE)
+        assertThat(credits.warningLevelOf(id)).isEqualTo(0.toShort())
+
+        // The same photo's alert, charged under the same event id and a different entry type.
+        val alert = charges.charge(hunter, ChargeRequest(photo, 150, EntryType.SMS_DEBIT))
+
+        assertThat(alert.outcome).isEqualTo(ChargeOutcome.CHARGED)
+        assertThat(alert.balanceAfterMinor).isEqualTo(350)
+        // The hunter is told, on an SMS that was going out anyway.
+        assertThat(alert.notice).isEqualTo(Notice.LOW_BALANCE)
+        assertThat(credits.warningLevelOf(id)).isEqualTo(1.toShort())
+    }
+
+    @Test
+    fun `a recognition charge that empties the balance leaves the notice for the alert`() {
+        val hunter = register()
+        val id = hunter.id!!
+        // Drained with canDeliverNotice=false so the setup itself claims no warning and the
+        // assertions below are about this slice's charges and nothing else.
+        charges.charge(
+            hunter,
+            ChargeRequest("evt-" + UUID.randomUUID(), 2400, EntryType.SMS_DEBIT, canDeliverNotice = false),
+        ) // -> 100: one recognition left, no alert
+        val photo = "evt-" + UUID.randomUUID()
+
+        val recognition = charges.charge(
+            hunter,
+            ChargeRequest(photo, 100, EntryType.RECOGNITION_DEBIT, canDeliverNotice = false),
+        )
+
+        assertThat(recognition.balanceAfterMinor).isEqualTo(0)
+        assertThat(recognition.notice).isEqualTo(Notice.NONE)
+        assertThat(credits.warningLevelOf(id)).isEqualTo(0.toShort())
+
+        // And the alert cannot be sent at all, so nothing tells the hunter they ran dry. That is
+        // the stranded-balance case written down: a photo paid for whose alert is not affordable.
+        // Deciding what to do about it (requiring both prices up front, or a notice on refusal) is
+        // user-account's call and a later slice; the warning level is left unclaimed for it.
+        val alert = charges.charge(hunter, ChargeRequest(photo, 150, EntryType.SMS_DEBIT))
+
+        assertThat(alert.outcome).isEqualTo(ChargeOutcome.INSUFFICIENT)
+        assertThat(alert.notice).isEqualTo(Notice.NONE)
+        assertThat(credits.warningLevelOf(id)).isEqualTo(0.toShort())
+    }
+
+    @Test
     fun `an inactive hunter is not charged`() {
         val hunter = register()
         hunter.active = false

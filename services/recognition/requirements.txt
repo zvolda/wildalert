@@ -1,6 +1,9 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 python-multipart==0.0.32
+# HTTP client for the charge call to user-account (app/credit.py). A production dependency
+# since credit slice 4; before that it was only the test client's transport, in requirements-dev.
+httpx==0.28.1
 # S3 API client — reads stored images from Cloudflare R2 (RECOGNITION_IMAGE_SOURCE=r2)
 boto3==1.43.94
 # Cloud Pub/Sub client — publishes animal.recognized (RECOGNITION_EVENTS_PROVIDER=pubsub).

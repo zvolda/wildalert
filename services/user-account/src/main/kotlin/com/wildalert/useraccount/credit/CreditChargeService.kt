@@ -11,8 +11,10 @@ import java.util.UUID
  * Takes money off a hunter's balance for one event, exactly once, in one transaction.
  *
  * This is the piece the whole feature rests on, so the ordering below is deliberate and the
- * comments say why. `notification` calls it for every alert it sends (`SMS_DEBIT`);
- * `recognition` will charge its own `RECOGNITION_DEBIT` per photo in a later slice.
+ * comments say why. Both consumers call it: `recognition` charges a `RECOGNITION_DEBIT` per photo
+ * *before* it runs the model, and `notification` an `SMS_DEBIT` for every alert it sends. The two
+ * land under the same `external_ref` (the photo's event id) and different entry types, which is
+ * what the partial unique index on `(entry_type, external_ref)` is for.
  *
  * **Three properties it has to have:**
  *
@@ -95,9 +97,13 @@ class CreditChargeService(
             ),
         )
 
-        return answer(
-            hunterId, phone, active, ChargeOutcome.CHARGED, balanceAfter, noticeFor(hunterId, balanceAfter),
-        )
+        // Only a caller that can deliver the warning is allowed to claim it. A claim by anyone
+        // else discards it: recognition charges before notification does, so it is recognition's
+        // debit that crosses the threshold, and recognition has no SMS to put the warning on.
+        val notice =
+            if (request.canDeliverNotice) noticeFor(hunterId, balanceAfter) else Notice.NONE
+
+        return answer(hunterId, phone, active, ChargeOutcome.CHARGED, balanceAfter, notice)
     }
 
     /**
