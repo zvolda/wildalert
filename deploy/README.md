@@ -65,12 +65,15 @@ an email's recipients.
 
 Keep everything in one region: cross-region traffic costs money and adds latency.
 
-### gateway — the UI's front door (built, not yet deployed)
+### gateway — the UI's front door (deployed 2026-10-29, revision `gateway-00001-p5f`)
+
+Live on `https://wildalert.app` once `site-worker` is deployed — **the `run.app` URL below is the
+origin, not the address to hand anyone.** See `site-worker/README.md` and `CONSOLE.md` step 11c.
 
 | Setting | Value |
 |---|---|
 | Cloud Run service | `gateway`, europe-west3, **Allow unauthenticated**, ingress All, min/max 0/2, 1 vCPU / 512 MiB |
-| Service account | `wildalert-gateway@wildalert-prod.iam.gserviceaccount.com` — **does not exist yet; create it before deploying** |
+| Service account | `wildalert-gateway@wildalert-prod.iam.gserviceaccount.com` |
 | Service account roles | `roles/run.invoker` **on service** `user-account`. Nothing else: no database, no secrets, no Pub/Sub |
 | Env | `USER_ACCOUNT_BASE_URL=https://user-account-lznkorfm4q-ey.a.run.app`, `USER_ACCOUNT_AUTH=gcp-id-token` |
 | Secrets | none |
@@ -92,6 +95,30 @@ cannot cost us an SMS or a DeepFaune run, so a scripted signup buys a Cloud SQL 
 else. **Set no `SIGNUP_GRANT_MINOR` on this service**; unset is the intended configuration. Turn
 the grant on later, once Cloudflare Turnstile or a rate-limit rule is in front of the form. See
 `CONSOLE.md` step 10h.
+
+### `wildalert.app` — the Cloudflare Worker in front of the gateway (not yet deployed)
+
+| Setting | Value |
+|---|---|
+| Worker | `wildalert-site`, from `deploy/site-worker/`, routes `wildalert.app/*` and `www.wildalert.app/*` |
+| Vars | `ORIGIN_HOST=gateway-lznkorfm4q-ey.a.run.app`, `CANONICAL_HOST=wildalert.app` — committed in `wrangler.toml` |
+| Secrets | none required. `ORIGIN_SECRET` is optional and inert until the gateway demands it |
+| DNS | AAAA `@` and `www` → `100::`, both **Proxied**. MX and SPF untouched |
+| Cost | **€0** — Workers free tier, 100,000 requests/day |
+
+**Why a worker and not a domain mapping.** Cloud Run routes by Host header, so a proxied record
+aimed at the gateway arrives as `Host: wildalert.app`, matches no service and 404s. Cloud Run's
+domain mapping is what teaches it that hostname — and it does **not exist in europe-west3**, and
+is preview / "not production-ready" where it does. Cloudflare's own host-header override is
+Enterprise-only. A global external load balancer is Google's recommendation and costs **~€18–20
+a month**, twice the Cloud SQL bill. So: one header, rewritten by a worker, for nothing. Full
+reasoning and the rejected Firebase Hosting option are in `site-worker/README.md`.
+
+**It does not touch email.** MX is independent of A/AAAA, so the apex catch-all and every
+`<token>@wildalert.app` keep working through the *other* worker.
+
+**It does not close the `run.app` bypass.** The gateway's Cloud Run URL stays publicly reachable,
+so an edge rule can be walked around. Acceptable only while `SIGNUP_GRANT_MINOR` is 0.
 
 ### Pub/Sub (topics and the `.dlt.inspect` pull subscriptions exist; push subscriptions wait for the consumers)
 
@@ -175,6 +202,11 @@ Cloud Build does not expand built-ins inside the value of a user substitution, s
 - **Artifact Registry and Secret Manager** are fractions of a cent at this size.
 - **Pub/Sub is free** at this volume — the free tier covers 10 GiB/month and a few trail-cam
   photos a day is nowhere near it.
+- **The domain costs nothing to serve.** Cloudflare Workers are free to 100,000 requests/day, and
+  the apex is already registered at cost. The alternative — a global external Application Load
+  Balancer, which is what Google recommends for a custom domain on Cloud Run — would have been
+  **~€18–20/month for the forwarding rule alone**, roughly doubling this project's bill to solve
+  a Host header. That is the whole reason `site-worker` exists.
 
 So tear the database down when you stop for a while — see *Teardown*.
 
@@ -336,6 +368,10 @@ deployed.
   part of its own deploy).
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
   it, and set `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. No tokens need regenerating —
-  only the token is stored, the domain comes from config.
+  only the token is stored, the domain comes from config. **All done 2026-10-20.**
+- **The site on `wildalert.app`**: two proxied AAAA records and `wrangler deploy` in
+  `deploy/site-worker/`. The gateway itself went up on 2026-10-29 (`gateway-00001-p5f`) and
+  answers on its `run.app` URL; only the domain in front of it is outstanding. `CONSOLE.md`
+  step 11c.
 
 The broker decision is **settled**: Cloud Pub/Sub push, Kafka removed from the repo (2026-10-08).
