@@ -39,6 +39,11 @@ billing:
   # this non-zero once the gateway is public.
   signup-grant-minor: ${SIGNUP_GRANT_MINOR:2500}
 
+  # Below this balance, a charge reports LOW_BALANCE once, so the warning can be appended to an
+  # alert that is going out anyway rather than costing an SMS of its own. 500 haléře is two
+  # alerts with their recognition at 100 + 150.
+  low-balance-threshold-minor: ${LOW_BALANCE_THRESHOLD_MINOR:500}
+
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
   # apex of the Cloudflare Email Routing zone, e.g. wildalert.app -- not a subdomain, because

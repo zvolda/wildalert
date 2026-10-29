@@ -70,6 +70,10 @@ class ApiRoutesTest {
             "/api/hunters/by-email?email=hunter@example.com",
             "/api/hunters/by-inbound-address?address=abc123@wildalert.local",
             "/api/hunters/11111111-1111-1111-1111-111111111111",
+            // The charge endpoints return a phone number *and* spend credit, so reaching them
+            // from a browser would let anyone drain an account.
+            "/api/hunters/by-inbound-address/charges?address=abc123@wildalert.local",
+            "/api/hunters/11111111-1111-1111-1111-111111111111/charges",
         )
 
         for (path in blocked) {

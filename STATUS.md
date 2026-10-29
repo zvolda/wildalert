@@ -1019,6 +1019,61 @@ and is switched on by the next.
     `flyway_schema_history` row by hand. Fine for a migration that has never left this machine —
     not an option once one has been deployed.
 
+- **Slice 2 (2026-10-29, done): the charge endpoint, still nobody calls it.**
+  `POST /api/hunters/by-inbound-address/charges` (and a `{id}` variant for the legacy `hunterId`
+  fallback) resolves the hunter **and** debits them in one call, returning
+  `{hunterId, phone, active, outcome, balanceAfterMinor, notice}`. Outcomes are `CHARGED`,
+  `ALREADY_CHARGED`, `INSUFFICIENT`, `INACTIVE`. Nothing calls it yet.
+  - **One call, not two,** because the caller needs the phone number *and* permission to send.
+    Splitting it would double the cold-start exposure on a scaled-to-zero service and create a
+    looked-up-but-not-charged state — and it lets "may this hunter be texted?" be decided inside
+    the transaction holding the money, which is the only race-free place for it.
+  - **The three properties, and what actually enforces each:**
+    - *A redelivery must not be charged twice.* A fast-path ledger lookup answers the ordinary
+      case without touching the balance, but **the partial unique index is the guarantee** — if a
+      racing replica charged the same event after that check, the insert violates it and the whole
+      transaction rolls back, debit included. The retry then sees `ALREADY_CHARGED`.
+    - *Replicas must not overdraw.* `update … where balance_minor >= :cost` does the arithmetic
+      and the check in one statement, under the row lock the update itself takes. No
+      read-then-write in Kotlin, so no window to lose.
+    - *A refusal leaves no trace.* `INSUFFICIENT` and `INACTIVE` write nothing — so there is
+      nothing to roll back and nothing to explain in a statement. A refusal is logged, not
+      recorded.
+  - **`ALREADY_CHARGED` is a success, not an error.** The charge means "this event is paid for",
+    which stays true across every redelivery — which is why there is no refund in the hot path and
+    no compensating call to get wrong.
+  - **Told once per depletion**, via the `warning_level` move: only the transaction that actually
+    raises the level gets a notice back, so thirty photos on an empty balance produce one message.
+  - **Verified live against the running service**, end to end on one hunter:
+    `RECOGNITION_DEBIT` 100 → 2400, then `SMS_DEBIT` 150 **under the same event id** → 2250 (the
+    two-part price working, because the key is `(entry_type, external_ref)` and not the event
+    alone), the same alert charge again → `ALREADY_CHARGED` with the balance unmoved, down to 500
+    → `LOW_BALANCE`, next charge → `NONE` (already warned), exactly to 0 → `OUT_OF_CREDIT`, and
+    one more → `INSUFFICIENT` with `NONE` and **no ledger row**. The resulting ledger reads as a
+    clean statement with a correct running balance.
+  - **The racing-replicas test is the one that matters, and it passes.** Eight threads, distinct
+    event ids, a balance holding exactly one alert → exactly **one** `CHARGED`, seven
+    `INSUFFICIENT`, final balance 0, one ledger row. A second case runs eight threads on the
+    *same* event id — the redelivery storm where the fast path cannot help because nothing has
+    committed — and the money still moves exactly once. Both **commit** (a rolled-back test
+    transaction would prove nothing) and clean up after themselves; verified afterwards that no
+    test rows were left behind.
+  - **`ApiRoutes.kt`'s forbidden list now names the charge endpoints** — comment only, no route
+    added — and the gateway test asserts they 404 and never reach the upstream. They are worse
+    than the other private endpoints: they return a phone number *and* spend credit, so reaching
+    them from a browser would let anyone drain an account.
+  - **Tests:** 172 Kotlin across the repo (user-account 34 → 48), 0 failures.
+  - **Two traps, both the same shape as slice 1's:** a **native update does not refresh JPA's
+    first-level cache**, so `findById(...).warningLevel` returned the pre-charge value and a test
+    was asserting against the cache rather than the database — balance and warning level are both
+    read natively now. And `@Modifying` needs **`flushAutomatically = true`**, or a native
+    statement runs before a pending insert in the same transaction reaches the database and
+    reports a false `INSUFFICIENT`.
+  - **A local-dev reminder that cost a build:** WSL2 shuts the distro down between separate
+    `wsl.exe` invocations and takes Postgres with it, so `docker start` followed by a Gradle run
+    fails with a bare `ConnectException`. Holding the distro open with a long-running
+    `wsl.exe -e sleep` for the duration of the test run is enough.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control now belongs here and is no longer optional** once the
