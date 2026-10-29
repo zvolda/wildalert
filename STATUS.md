@@ -1104,14 +1104,70 @@ and is switched on by the next.
     the gateway is now deployable as-is, with the grant switched on later behind Turnstile or a
     Cloudflare rate-limit rule.
 
+- **The site on `wildalert.app` (2026-10-29): a Cloudflare Worker, because Cloud Run cannot map
+  the domain here.** The gateway went up the same day (`gateway-00001-p5f`, SA
+  `wildalert-gateway@`, image `:a2bd22f`) and serves the registration form on its `run.app` URL;
+  this slice is the domain in front of it. Written and documented, **not yet deployed** — it needs
+  two DNS records and a `wrangler deploy`, both of which are Cloudflare-side.
+  - **Cloud Run routes by Host header**, so a proxied DNS record aimed at the gateway arrives as
+    `Host: wildalert.app`, matches no service and 404s. Teaching Cloud Run the hostname is exactly
+    what a *domain mapping* does — and it does **not exist in `europe-west3`**, and Google labels
+    it preview and "not production-ready … due to latency issues" in the regions where it does.
+    That one fact removed the obvious answer. **Checked against the live service, not assumed:**
+    same URL, one header apart — `-H 'Host: wildalert.app'` → **404**, without it → **200**.
+  - **The three remaining options, and the arithmetic.** Cloudflare's native host-header override
+    is **Enterprise-only** (free Origin Rules can change the destination port and nothing else).
+    A **global external Application Load Balancer** is Google's own recommendation and the only
+    option that can take the `run.app` URL off the public internet — for **~€18–20/month**, which
+    would roughly double this project's bill to solve a header. **A worker** does it for €0, in
+    one file, on a zone where `wrangler` was already proven by the email worker. Firebase Hosting
+    was the near-miss: free, Google-native, and `europe-west3` *is* supported — passed over
+    because it adds a second CDN in front of a service that already serves its own static files,
+    and its rewrites cannot add a header, so it has no answer to the bypass.
+  - **The apex is canonical, `www` 301s to it** — in the worker, not in a dashboard redirect rule,
+    so there is one place to look. The apex wins because hunter addresses are already
+    `<token>@wildalert.app`: same string on the page and in the email.
+  - **Email is untouched, and that is a fact about DNS, not a hope.** MX records are independent
+    of A/AAAA/CNAME, so the apex catch-all and every hunter address keep working through the
+    *other* worker. Two workers, one zone, no overlap: that one has an `email` handler and no
+    routes, this one a `fetch` handler and two.
+  - **The `AAAA → 100::` records look wrong and are not.** A Workers route only attaches to a
+    hostname with a **proxied** record, and the worker answers before anything is dialled, so the
+    content is never used — `100::` is the IPv6 discard prefix, chosen precisely because it is
+    unroutable. Grey-clouded, the request goes to `100::` and hangs.
+  - **Nothing is cached, deliberately.** The React app ships *inside* the gateway's jar so the
+    page and the API can never be different versions; a cached `index.html` surviving a deploy is
+    exactly how that guarantee would be lost. The hashed `assets/*` are safe to cache and worth a
+    rule later — a rule that names them, never a blanket one.
+  - **What it does not fix:** `gateway-lznkorfm4q-ey.a.run.app` stays publicly reachable, so any
+    edge rule can be walked around by calling it directly. Tolerable **only because
+    `SIGNUP_GRANT_MINOR` is 0**. The worker already sends `x-origin-secret` when `ORIGIN_SECRET`
+    is set, so closing it later is a gateway-side change plus one `wrangler secret put` — in that
+    order, or the site is down in between.
+  - **Rate limiting, costed before choosing** (the question that drove the decision): Cloudflare's
+    free tier is **one rule, IP only, a 10-second window and a 10-second block** — a patient
+    script at 5 requests/10s still lands ~43,000 registrations a day, so it is a flood brake, not
+    abuse control. **Turnstile (~half a day) is the real control and works regardless of who
+    fronts the domain.** In-app is possible — Gateway MVC ships `Bucket4jFilterFunctions.rateLimit`
+    that drops into `ApiRoutes.kt`'s existing `.before(...)` chain — but it resolves an
+    `AsyncProxyManager` bean *per request* and the autoconfiguration registers only the
+    `FilterSupplier`, so it wants a distributed store (Redis/Postgres) that this 512 MiB,
+    no-datastore edge service deliberately lacks. A per-instance `bucket4j-core` filter (~60–80
+    lines, ceiling 2× the configured rate at `max-instances=2`) is the honest cheap version if it
+    is ever wanted. **Cloud Armor is the only zero-code real answer, and it rides on the €18 LB.**
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
-  admin auth). **Registration abuse control now belongs here and is no longer optional** once the
-  gateway deploys — see slice 2.
+  admin auth). **Registration abuse control is now live work, not future work** — the gateway is
+  deployed and the form is publicly reachable. **Turnstile is the control**; Cloudflare's free
+  rate limiting (one rule, IP only, 10-second window) is a flood brake and nothing more. See
+  slice 2 and the domain slice below.
 - **8 — React frontend** — slice 1 (registration UI) and slice 2 (the gateway that serves it)
   built and tested, plus the detection-history service behind the eventual dashboard; all above.
-  Still to do: deploy the gateway, see the UI in a browser, phone verification, the dashboard
-  itself, presigned photo URLs and auth.
+  **The gateway is deployed** (2026-10-29, `gateway-00001-p5f`) and serves the form on its
+  `run.app` URL; `deploy/site-worker/` puts it on `wildalert.app`, awaiting two DNS records and a
+  `wrangler deploy`. Still to do after that: phone verification, the dashboard itself, presigned
+  photo URLs and auth.
 - **9 — Scale / auth / billing.**
 
 ## Key decisions

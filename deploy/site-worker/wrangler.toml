@@ -1,0 +1,37 @@
+# Cloudflare Worker that serves wildalert.app from the Cloud Run gateway -- see README.md here.
+#
+# Deploy:  npx wrangler deploy          (from this directory)
+# Secrets: npx wrangler secret put ORIGIN_SECRET   (optional -- see README, "Closing the bypass")
+#
+# Nothing sensitive belongs in this file -- it is committed.
+name = "wildalert-site"
+main = "src/worker.js"
+compatibility_date = "2026-10-29"
+
+# No workers.dev URL for this script. It would be a second way into the gateway on a hostname we
+# do not control, and the routes below are how it is meant to be reached. Same flag as the email
+# worker, different reason.
+#
+# This must stay ABOVE [vars]: in TOML every key after a table header belongs to that table, so
+# down there it would quietly become `vars.workers_dev` and the real setting would go missing.
+workers_dev = false
+
+# Both hostnames hit the same script: the apex serves the site, www 301s to the apex. The worker
+# decides which, so there is no Cloudflare redirect rule to keep in sync with the code.
+#
+# A route only attaches if the hostname has a PROXIED DNS record, which is why step 11c creates an
+# AAAA to the 100:: discard prefix for each. The record's content is never used -- the worker
+# answers before anything is dialled -- but without a record Cloudflare has no hostname to hang
+# the route on, and without the orange cloud the request never reaches a worker at all.
+routes = [
+  { pattern = "wildalert.app/*", zone_name = "wildalert.app" },
+  { pattern = "www.wildalert.app/*", zone_name = "wildalert.app" },
+]
+
+# Not sensitive, and worth seeing in a diff when they change, so these are vars not secrets.
+[vars]
+# The Cloud Run gateway, hostname only. This is also the Host header the worker sends, which is
+# the entire reason this worker exists -- see README.
+ORIGIN_HOST = "gateway-lznkorfm4q-ey.a.run.app"
+# The one hostname the site is served on. Any other hostname in `routes` redirects here.
+CANONICAL_HOST = "wildalert.app"

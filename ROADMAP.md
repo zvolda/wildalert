@@ -255,12 +255,11 @@ then the async flow, then deploy, then scale.
         Notification needs the same treatment when it deploys.
   - [x] Warm the recognition model at startup (FastAPI lifespan, ~1 min at boot instead of inside
         the first pushed event)
-  - [~] Domain + Cloudflare Email Routing pointed at deployed ingestion. **`wildalert.app`
-        registered, Email Routing live and receiving mail (2026-10-14)**; the Email Worker is
-        written (`deploy/email-worker/`). What remains is `wrangler deploy`, switching the
-        catch-all from *Send to an email* to *Send to a Worker*, and
-        `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account — all of which need email-ingestion's
-        Cloud Run URL to exist first.
+  - [x] Domain + Cloudflare Email Routing pointed at deployed ingestion. **`wildalert.app`
+        registered, Email Routing live and receiving mail (2026-10-14)**; the Email Worker
+        (`deploy/email-worker/`) deployed, the catch-all switched from *Send to an email* to
+        *Send to a Worker*, and `INBOUND_EMAIL_DOMAIN=wildalert.app` set on user-account — **all
+        done 2026-10-20**, and a real emailed photo produced an SMS on 2026-10-22.
         Design: **catch-all on the apex** (`*@<domain>`), so every hunter's personal address
         reaches the webhook with no per-hunter setup. **Not a subdomain:** Cloudflare offers a
         catch-all on the apex only; a subdomain needs one explicit routing rule per address,
@@ -322,8 +321,9 @@ then the async flow, then deploy, then scale.
   - **Tailwind CSS v4** for styling (configured in CSS — no `tailwind.config.js` in v4).
   - **Vitest** in a plain node environment; the testable logic stays in pure modules so no jsdom
     or DOM-testing library is needed.
-  - **Production edge = Spring Cloud Gateway serving both the UI and the API** (**built**, slice 2;
-    not yet built). It serves the built static files *and* proxies `/api/**` to the private
+  - **Production edge = Spring Cloud Gateway serving both the UI and the API** (slice 2; built,
+    and **deployed 2026-10-29** as `gateway-00001-p5f`). It serves the built static files *and*
+    proxies `/api/**` to the private
     `user-account` with a Google ID token. One origin, so **no CORS anywhere** and no second
     hosting product — and it cashes in the Spring Cloud Gateway learning target above. Until it
     exists the app runs locally only, against `user-account` on :8081 through Vite's dev proxy.
@@ -333,6 +333,14 @@ then the async flow, then deploy, then scale.
 - **Tasks:**
   - [ ] Hunter signup + phone verification
         — *signup form built in slice 1 (`web/`); phone verification still to do*
+  - [~] **The site on `wildalert.app`** — `deploy/site-worker/` written 2026-10-29; needs two
+        proxied `AAAA → 100::` records and `npx wrangler deploy`. **A Cloudflare Worker, because
+        Cloud Run routes by Host header and its domain mapping does not exist in `europe-west3`**
+        (and is preview-only where it does); Cloudflare's native host-header override is
+        Enterprise-only, and the load balancer Google recommends costs ~€18–20/month to rewrite
+        one header. The apex is canonical — it already carries the `<token>@wildalert.app` hunter
+        addresses — with `www` 301ing to it, and MX is untouched so inbound email is unaffected.
+        `CONSOLE.md` step 11c.
   - [x] Show the hunter's personal inbound address with setup help (Gmail/Outlook forwarding rule,
         or entering it directly in the camera app) — slice 1, shown right after registering
   - [x] **Detection History service** (Kotlin/Spring Boot + Postgres): consume

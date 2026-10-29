@@ -1223,6 +1223,76 @@ produced `[FAKE SMS] … "WildAlert: wild boar detected (99% confidence)"` nine 
 
 ---
 
+## Step 11c — The site on `wildalert.app` (Cloudflare Worker in front of the gateway)
+
+The last ugly URL. The gateway works and serves the React app; this puts it on the domain you
+already own. The worker, the DNS records and the reasoning live in
+**[`site-worker/README.md`](./site-worker/README.md)** — this is the sequence.
+
+**Why this is not a Cloud Run domain mapping.** Cloud Run routes by **Host header**, so a proxied
+record pointed at the gateway arrives with `Host: wildalert.app`, matches no service and gets a
+404. Teaching Cloud Run that hostname is exactly what a domain mapping does — and `europe-west3`
+is **not in the supported region list**, with the feature flagged preview and "not
+production-ready … due to latency issues" regardless. Cloudflare's own host-header override is
+**Enterprise-only** on Origin Rules. A global external load balancer would solve it properly, and
+costs **~€18–20/month** for the forwarding rule — twice the Cloud SQL idle cost, on the one
+project whose premise is that infrastructure is nearly free. So: a worker whose whole job is one
+header, for €0.
+
+**Email is not affected.** MX records are independent of A/AAAA/CNAME, so the apex catch-all and
+every `<token>@wildalert.app` keep working through step 11b's worker. Two workers, one zone, no
+overlap: that one has an `email` handler and no routes, this one has a `fetch` handler and two.
+
+**In this order:**
+
+1. **DNS** → the zone → DNS → Records. Two records, both **Proxied** (orange cloud):
+
+   | Type | Name | Content | Proxy |
+   |---|---|---|---|
+   | AAAA | `@` | `100::` | Proxied |
+   | AAAA | `www` | `100::` | Proxied |
+
+   `100::` is the IPv6 discard prefix and is *meant* to be unroutable: a Workers route only
+   attaches to a hostname with a proxied record, and the worker answers before anything is
+   dialled, so the content is never used. **Grey-clouded, the request goes to `100::` and hangs.**
+   Do not touch the MX or SPF rows.
+
+2. **Deploy the worker:**
+   ```bash
+   cd deploy/site-worker && npx wrangler deploy
+   ```
+   It has routes, so unlike the email worker this exits 0 and attaches them.
+
+3. **SSL/TLS → Overview → Full (strict)** and **Edge Certificates → Always Use HTTPS → On**.
+   Universal SSL already covers the apex and `*.wildalert.app`; nothing to request. Strict is free
+   here because the only origin is `*.run.app`, which Google serves with a valid certificate.
+
+4. **Verify** — the first three are one-liners, the fourth is the one that matters:
+   ```bash
+   curl -sI https://wildalert.app/ | head -1                       # 200
+   curl -s  https://wildalert.app/ | grep -o '<title>.*</title>'   # WildAlert — Register
+   curl -sI https://www.wildalert.app/ | grep -iE 'HTTP|location'  # 301 -> https://wildalert.app/
+   curl -sI https://wildalert.app/api/hunters/by-email             # 404, nothing in user-account's logs
+   ```
+   Then **register a hunter through the form on the real domain** — the only check that exercises
+   worker → gateway → ID token → private user-account end to end. A 404 on `/` while the
+   `run.app` URL still answers 200 means the Host rewrite is not happening; a 502 means the
+   gateway is down. `npx wrangler tail` shows which.
+
+5. **Send one more photo** to a hunter's address afterwards. The DNS change should be invisible to
+   Email Routing, and this is the cheapest way to know it was.
+
+**What this does not fix.** `https://gateway-lznkorfm4q-ey.a.run.app` keeps answering the public
+internet, so anything enforced at the Cloudflare edge can be bypassed by calling it directly. That
+is tolerable **only because `SIGNUP_GRANT_MINOR` defaults to 0** (step 10h) — a scripted signup
+buys a Cloud SQL row and nothing else. Before turning the grant back on, add Turnstile to the
+form; it is the real control and works regardless of who fronts the domain. Cloudflare's free
+rate limiting is one rule, IP only, with a **10-second** window and a 10-second block — a flood
+brake, not abuse control. The bypass itself closes with `ORIGIN_SECRET`
+(see `site-worker/README.md`) or with the load balancer.
+
+---
+
 ## Step 12 — Stop paying when you stop working
 
 `wildalert-db` is the only resource with a meaningful idle cost (~$9/month). **It is deliberately
