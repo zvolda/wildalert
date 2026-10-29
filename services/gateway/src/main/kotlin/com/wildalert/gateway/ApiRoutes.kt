@@ -15,11 +15,18 @@ import org.springframework.web.servlet.function.ServerResponse
  * Everything the internet is allowed to reach on the private services, in one file.
  *
  * **The allowlist is the security model here, so it is deliberately narrow.** `user-account`
- * exposes `GET /api/hunters/{id}`, `GET /api/hunters/by-email` and
- * `GET /api/hunters/by-inbound-address`, and every one of them returns a hunter's **phone
- * number**. A convenient wildcard route under `/api/hunters` would publish all three to anyone
- * who guessed the URL. So the only route is the exact method and path the registration form
- * needs: `POST /api/hunters`.
+ * exposes several endpoints that each return a hunter's **phone number**, and a convenient
+ * wildcard route under `/api/hunters` would publish every one of them to anyone who guessed the
+ * URL. So the only route is the exact method and path the registration form needs:
+ * `POST /api/hunters`.
+ *
+ * Deliberately **not** proxied, and each for that reason:
+ * - `GET /api/hunters/{id}`
+ * - `GET /api/hunters/by-email`
+ * - `GET /api/hunters/by-inbound-address`
+ * - `POST /api/hunters/by-inbound-address/charges` and `POST /api/hunters/{id}/charges` — these
+ *   also *spend the hunter's credit*, so reaching them from a browser would let anyone drain an
+ *   account as well as read a phone number.
  *
  * Anything not matched here falls through to the static React app, and an unmatched API path
  * ends up a 404 from this service — it never reaches user-account at all.
