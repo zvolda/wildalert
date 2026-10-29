@@ -889,13 +889,23 @@ The second public service, and the only one a browser talks to. It serves the bu
 of its own jar and forwards exactly one call — `POST /api/hunters` — to the private user-account
 with a Google ID token.
 
-> **Read this before deploying.** Until now, open registration was a *theoretical* risk: the
-> register endpoint was unauthenticated and unthrottled, but nothing was publicly reachable, so
-> the decision was deliberately deferred (see STATUS.md). **This deploy is what makes it real.**
-> Once the gateway is live, anyone can create hunters at will — each one a row in Cloud SQL and a
-> future SMS cost. `max-instances` is a spend cap, not a rate limit. If this is going to sit on the
-> public internet for more than a test, add Cloudflare Turnstile to the form (free, and the account
-> is already on Cloudflare) or put it behind Cloudflare with a rate-limiting rule first.
+> **Open registration, and why this is now safe to deploy.** The register endpoint is
+> unauthenticated and unthrottled, and this deploy is what makes it publicly reachable. Anyone can
+> create hunters at will, and `max-instances` is a spend cap, not a rate limit.
+>
+> **What makes that affordable is that the signup grant now defaults to 0** (decided 2026-10-29).
+> A hunter with no credit cannot cost us an SMS or a DeepFaune run, so a scripted signup buys a
+> Cloud SQL row and nothing else. **Set no `SIGNUP_GRANT_MINOR` on this deploy** — the default is
+> the safe value, and leaving it unset is the intended configuration.
+>
+> The arithmetic behind the decision: at the old 2500-haléř grant a fake signup was worth 25 CZK,
+> and roughly **sixteen** abusive accounts could drain a 200 CZK GoSMS balance. The money was
+> never the main risk — once GoSMS is empty, *paying* hunters get no alerts, which for a product
+> whose only output is an SMS is a silent outage.
+>
+> Turn the grant on later, with `SIGNUP_GRANT_MINOR`, once Cloudflare Turnstile is on the form or
+> a Cloudflare rate-limit rule is in front of it. Until then you can still register yourself and
+> top up normally.
 
 **First: the service account.** It does not exist yet — the ones that do are user-account,
 email-ingestion, recognition, notification and pubsub-push. Create `wildalert-gateway` *before*

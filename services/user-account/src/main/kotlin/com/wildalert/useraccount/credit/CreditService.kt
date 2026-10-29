@@ -19,13 +19,10 @@ class CreditService(
     private val credits: HunterCreditRepository,
     private val ledger: CreditLedgerRepository,
     /**
-     * What a new hunter starts with, in haléře. 2500 is ten alerts with their recognition
-     * (100 + 150 each) — though in practice it buys fewer, because every photo pays the 100
-     * whether or not it alerts.
-     *
-     * **This is also the entire abuse budget of an unauthenticated registration form**: at 2500 a
-     * scripted signup costs 25 CZK. Set `SIGNUP_GRANT_MINOR=0` the day someone finds the form —
-     * it is the kill switch, not the plan. Rate limiting is the real fix.
+     * What a new hunter starts with, in haléře. **Zero by default** — see `application.yml` for
+     * why at length. Briefly: this value is the entire abuse budget of an unauthenticated
+     * registration form, so a forgotten env var should cost nothing rather than give credit away.
+     * Turn it on once there is rate limiting in front of the form.
      */
     @Value("\${billing.signup-grant-minor}") private val signupGrantMinor: Long,
 ) {

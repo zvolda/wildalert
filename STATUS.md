@@ -1074,6 +1074,36 @@ and is switched on by the next.
     fails with a bare `ConnectException`. Holding the distro open with a long-running
     `wsl.exe -e sleep` for the duration of the test run is enough.
 
+- **Slice 2b (2026-10-29): the signup grant now defaults to 0, which unblocks the gateway deploy.**
+  One line of config and the reasoning behind it. `SIGNUP_GRANT_MINOR` still turns the grant on;
+  what changed is that **unset now means nothing rather than 2500**.
+  - **Why it unblocks the deploy.** The gateway's launch condition was abuse control, because a
+    public, unauthenticated, unthrottled registration form handing out 2500 haléře makes each
+    scripted signup worth 25 CZK — and roughly **sixteen** such accounts could drain a 200 CZK
+    GoSMS balance. The money was never the main risk: once GoSMS is empty, *paying* hunters get no
+    alerts, which for a product whose only output is an SMS is a silent outage. With a zero grant
+    a fake account cannot cost an SMS **or a DeepFaune run**, so a signup buys a Cloud SQL row and
+    nothing else, and the gateway can go up before Turnstile exists.
+  - **Zero is the *default*, not an override to remember.** Forgetting an env var should cost
+    nothing rather than give credit away, and this project has been bitten by must-set config
+    before — `INBOUND_EMAIL_DOMAIN` in slice 13: unset, and nobody was ever texted. **Set no
+    `SIGNUP_GRANT_MINOR` on the Cloud Run revision**; unset is the intended configuration.
+  - **A zero grant still writes a credit row and a 0-amount `SIGNUP_GRANT` entry**, so "every
+    hunter has a balance" stays true and nothing downstream needs a missing-row special case —
+    and "granted nothing" is a fact a statement can show.
+  - **The default is pinned by a test** (`SignupGrantDefaultTest`, no `properties` override, so it
+    reads what `application.yml` ships). It is a security property, not a preference: a change
+    that quietly made it generous again should fail a build rather than turn up on an invoice.
+    The two tests that *assert* on a granted balance now declare `billing.signup-grant-minor=2500`
+    themselves instead of silently inheriting a production default — which they should always have
+    done.
+  - **Verified live:** registration returned `creditBalanceMinor: 0`, and a charge against that
+    hunter returned `INSUFFICIENT` — so an account created by a script cannot trigger even one
+    inference.
+  - **Tests:** 174 Kotlin, 0 failures. `CONSOLE.md` step 10h and `deploy/README.md` rewritten:
+    the gateway is now deployable as-is, with the grant switched on later behind Turnstile or a
+    Cloudflare rate-limit rule.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control now belongs here and is no longer optional** once the
