@@ -28,6 +28,22 @@ class Settings(BaseModel):
     r2_secret_key: str = ""
     r2_region: str = "auto"
 
+    # What classifying one photo costs the hunter, in CZK minor units (haléře). It travels to
+    # user-account on every charge, because this service is the one that knows what a recognition
+    # costs — user-account charges what it is told.
+    #
+    # A default is safe here and 100 is the documented price: unlike the signup grant, forgetting
+    # the variable must charge the normal amount rather than run the model for free. A 0 would be
+    # rejected by the endpoint's own @Min(1), so a missing price fails loudly. Pinned by a test.
+    recognition_cost_minor: int = Field(default=100, ge=1)
+
+    # Base URL of user-account, which holds the balance and the hunter's identity.
+    user_account_base_url: str = "http://localhost:8081"
+    # "none" (default) or "gcp-id-token". In the cloud user-account runs with Cloud Run's
+    # "Require authentication", so calls need a Google ID token whose audience is the base URL;
+    # set USER_ACCOUNT_AUTH=gcp-id-token there. Locally there is nothing to authenticate to.
+    user_account_auth: str = "none"
+
     # How recognition results are published: "logging" (fake, default) or "pubsub".
     events_provider: str = "logging"
     animal_recognized_topic: str = "animal.recognized"
@@ -45,6 +61,9 @@ _STRING_ENV_VARS = {
     "r2_access_key": "R2_ACCESS_KEY",
     "r2_secret_key": "R2_SECRET_KEY",
     "r2_region": "R2_REGION",
+    # Same variable names notification uses, so the two charging services are configured alike.
+    "user_account_base_url": "USER_ACCOUNT_BASE_URL",
+    "user_account_auth": "USER_ACCOUNT_AUTH",
     "events_provider": "RECOGNITION_EVENTS_PROVIDER",
     "animal_recognized_topic": "ANIMAL_RECOGNIZED_TOPIC",
     "pubsub_project_id": "PUBSUB_PROJECT_ID",
@@ -53,6 +72,7 @@ _STRING_ENV_VARS = {
 # Numeric settings, parsed with the matching type.
 _NUMBER_ENV_VARS = {
     "confidence_threshold": ("RECOGNITION_CONFIDENCE_THRESHOLD", float),
+    "recognition_cost_minor": ("RECOGNITION_COST_MINOR", int),
 }
 
 

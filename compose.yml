@@ -268,10 +268,16 @@ services:
       RECOGNITION_IMAGE_SOURCE: local
       RECOGNITION_IMAGE_ROOT: /data/images
       RECOGNITION_CLASSIFIER: stub
+      # Each photo is charged RECOGNITION_COST_MINOR (default 100 haléře) before the model runs,
+      # so the local pipeline exercises the money path too. With no credit, the photo is acked and
+      # never classified -- set SIGNUP_GRANT_MINOR on user-account above (it is on for local dev)
+      # or the local run looks broken for the right reason.
+      USER_ACCOUNT_BASE_URL: http://user-account:8081
     ports:
       - "8084:8084"
     depends_on:
       - pubsub
+      - user-account
 
 volumes:
   pgdata:

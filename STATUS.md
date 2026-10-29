@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-26. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-29. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -1250,6 +1250,80 @@ and is switched on by the next.
     no-datastore edge service deliberately lacks. A per-instance `bucket4j-core` filter (~60–80
     lines, ceiling 2× the configured rate at `max-instances=2`) is the honest cheap version if it
     is ever wanted. **Cloud Armor is the only zero-code real answer, and it rides on the €18 LB.**
+
+- **Slice 4 (2026-10-29, done; needs a Cloud Run revision): recognition charges too, so the trial
+  buys ten recognitions and not sixteen alerts.** Every pushed photo is debited
+  `RECOGNITION_DEBIT` **100 haléře before the model runs**, the counterpart to slice 3's
+  `SMS_DEBIT` 150. It is also the only thing that charges for a photo that is classified but alerts
+  nobody — the case notification never sees.
+  - **Charging before classifying is the whole point.** Charging afterwards would let a drained
+    account buy a free DeepFaune run, which is the cost this debit exists to protect. A transient
+    failure after the charge is harmless: the retry takes the fast-path `ALREADY_CHARGED` and
+    re-runs inference without paying twice (proven live — balance unmoved, a new `eventId` with the
+    same `sourceEventId` published).
+  - **The order is fetch → charge → classify, not charge → fetch.** A missing image raises before
+    any money moves, because there is no refund path in this design and a photo that cannot be
+    classified must not be charged for. The storage read is free; the inference is not.
+  - **A refusal is acked, not retried.** `INSUFFICIENT`, `INACTIVE`, or an address that is no
+    hunter's → nothing classified, no `AnimalRecognized`, so notification never sees it and nobody
+    is texted. Nothing to compensate. A 204 is honest here: the message is not poison, and filling
+    the dead-letter topic with photos from empty accounts would bury the ones that really failed.
+  - **A behaviour change that is an improvement:** mail to a made-up name on our domain used to be
+    stored, classified and published, with notification then declining to text anyone — a DeepFaune
+    run no balance paid for, and an event detection-history answered 400 to. It now costs a storage
+    read and nothing else.
+  - **The one non-obvious thing this slice had to fix in user-account: `canDeliverNotice`.** A
+    notice fires once per depletion cycle (the `warning_level` claim), and recognition charges
+    *first*, so it is usually recognition's debit that crosses the low-balance threshold — and
+    recognition sends no SMS. Handing it the notice would not delay the warning, it would **lose**
+    it, silently, for every hunter. The charge request therefore carries `canDeliverNotice`
+    (default true, so notification's body is unchanged) and recognition sends false: it charges
+    without claiming, and the `SMS_DEBIT` that follows claims the warning and rides it out on an
+    alert that was going anyway. Verified live: recognition's debit landed the balance exactly on
+    the 500 threshold with `warning_level` still 0, and the alert's charge then returned
+    `LOW_BALANCE`.
+  - **The Python client is a deliberate copy of notification's `HunterClient` + `ChargeDtos`** —
+    the same call this project already makes for the event contracts. Strict on the outcome (an
+    unknown one raises rather than guess about money), and the response's **phone number is parsed
+    away**: recognition has no business holding it. `httpx` moved from `requirements-dev.txt` to
+    `requirements.txt`, which is the only new production dependency; the ID token needs none
+    (`google-auth` arrives with `google-cloud-pubsub`) and is built in the FastAPI `lifespan`
+    alongside the model, so an unmintable credential fails the revision at startup rather than on
+    the first real photo.
+  - **There is no way to switch charging off**, unlike `Classifier`/`ImageSource`/`EventPublisher`
+    with their fakes. Those stand in for things that cost money or need credentials; user-account
+    is ours. A flag whose absence meant free inference is exactly the hole
+    `billing.signup-grant-minor` was changed to avoid — the asymmetry is deliberate: forgetting the
+    grant must give nothing away, forgetting the price must still charge.
+  - **The bug the unit tests could not see, found on the first live call: HTTP 415.** The body is
+    serialised by pydantic and passed to httpx as raw `content`, which httpx sends with **no
+    content type**, so Spring rejected it *before the controller ran* — a mocked transport does not
+    care. One header fixed it, and `test_credit.py` now pins it. The same shape as slice 12's
+    guessed GoSMS response: the contract between two services is only proven by a real call.
+  - **Verified live, Python → Kotlin → Postgres, on the real push endpoint** (user-account jar +
+    uvicorn + the dev Postgres): 2500 → 2400 `CHARGED` then classified and published; the same
+    event again → `ALREADY_CHARGED`, balance unmoved, re-published; `SMS_DEBIT` 150 under the
+    **same event id** → 2250, which is the two-part price working off `(entry_type, external_ref)`;
+    the threshold case above; an empty balance → `INSUFFICIENT`, 204, nothing classified, **no
+    ledger row**; a stranger's address → 404 → acked and not classified. The ledger reads as a
+    clean statement with a correct running balance throughout. Test rows removed afterwards.
+  - **Known gap, and it is user-account's to close: the stranded balance.** With 100 ≤ balance <
+    250 a photo is charged and classified but its alert is not affordable, so the hunter gets
+    silence *and* no warning (`noticeFor` only fires on a successful charge). `OUT_OF_CREDIT` is
+    practically unreachable for the same reason — it needs the balance to land on exactly 0. The
+    honest test is `balanceAfter < the smallest chargeable amount`; a test pins today's behaviour
+    so the change is deliberate.
+  - **Tests:** 200 Kotlin (user-account 48 → 54) and **63 Python** (was 34), 0 failures.
+    `./gradlew build` green with Postgres up.
+  - **Not deployed.** The running revision predates the charge and needs
+    `USER_ACCOUNT_BASE_URL`/`USER_ACCOUNT_AUTH` plus `roles/run.invoker` on user-account for
+    `wildalert-recognition`, which it does not hold. Deploy the image before or with those: a
+    revision that cannot reach user-account dead-letters every photo after five attempts while
+    looking healthy. `CONSOLE.md` step 10f carries the values and the warning.
+  - **A pre-existing trap noticed in passing:** `services/recognition/Dockerfile.local`, which
+    `compose.yml`'s local profile builds, is matched by `.gitignore`'s `*.local` and has therefore
+    never been committed. `docker compose --profile local up` cannot work from a fresh clone. Not
+    fixed here (it is nothing to do with credit) but worth its own one-line slice.
 
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,

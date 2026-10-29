@@ -13,8 +13,10 @@ import java.util.UUID
 /**
  * Resolve a hunter and charge them for one event, in a single call.
  *
- * **One call, not two, on purpose.** The caller (`notification`, and later `recognition`) needs
- * the phone number *and* permission to send. `notification` has called it since credit slice 3. Splitting it would double the cold-start exposure on
+ * **One call, not two, on purpose.** The caller needs the hunter *and* permission to spend: the
+ * phone number for `notification`, which has charged since credit slice 3, and simply "may this
+ * photo be classified?" for `recognition`, which has charged since slice 4 and throws the phone
+ * number away. Splitting it would double the cold-start exposure on
  * a scaled-to-zero service and introduce a state nobody wants: looked-up-but-not-charged. It also
  * lets the "may this hunter be texted?" decision be made inside the transaction that holds the
  * money, which is the only place it can be made without a race.

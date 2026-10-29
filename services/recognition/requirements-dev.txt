@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest==9.1.1
-httpx==0.28.1
+# httpx moved to requirements.txt in credit slice 4 -- the service itself calls user-account
+# with it now, and fastapi's TestClient uses the same library.

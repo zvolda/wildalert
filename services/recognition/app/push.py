@@ -6,7 +6,9 @@ A thin transport adapter — the work is `app.handler.handle`. This replaced a K
 **The HTTP status is the acknowledgement**, and Pub/Sub's subscription settings supply the retry
 and dead-letter policy the worker used to implement by hand:
 
-- 204 — handled and the result published. Pub/Sub acks.
+- 204 — handled and the result published. Pub/Sub acks. **Also the answer when nobody paid for
+  the photo** (no hunter at that address, no credit, hunter switched off): nothing is classified
+  and nothing is published, and retrying would reach the same refusal. See `app.handler`.
 - 400 — the message is not a valid ImageReceived and never will be. Pub/Sub retries, then parks it
   in the subscription's dead-letter topic, which is the only place its original bytes survive.
 - 404 — no image is stored under the event's key. Also dead-lettered eventually, but retried first,
@@ -29,6 +31,7 @@ from pydantic.alias_generators import to_camel
 
 from app.classifier import Classifier, get_classifier
 from app.config import Settings, get_settings
+from app.credit import CreditClient, get_credit_client
 from app.events import ImageReceived
 from app.handler import handle
 from app.image_source import ImageNotFoundError, ImageSource, get_image_source
@@ -77,6 +80,7 @@ def on_image_received(
     envelope: PubSubPushEnvelope,
     source: ImageSource = Depends(get_image_source),
     classifier: Classifier = Depends(get_classifier),
+    credit: CreditClient = Depends(get_credit_client),
     publisher: EventPublisher = Depends(get_event_publisher),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -108,10 +112,24 @@ def on_image_received(
     )
 
     try:
-        result = handle(event, source, classifier, settings.confidence_threshold)
+        result = handle(
+            event,
+            source,
+            classifier,
+            credit,
+            threshold=settings.confidence_threshold,
+            cost_minor=settings.recognition_cost_minor,
+        )
     except ImageNotFoundError as e:
         log.warning("Nothing to recognize for ImageReceived id=%s: %s", event.event_id, e)
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+    if result is None:
+        # Nobody paid for this photo, so there is nothing to publish and nothing to retry: a
+        # redelivery would reach the same refusal. Acking is the honest answer — the message is
+        # not poison, and filling the dead-letter topic with photos from unpaid accounts would
+        # bury the ones that really failed. handle() has logged which refusal it was.
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # Raises on failure, so Pub/Sub redelivers rather than losing the result.
     publisher.publish(result)

@@ -63,6 +63,22 @@ data class ChargeRequest(
      * `RECOGNITION_DEBIT` and later an `SMS_DEBIT` without the second looking like a duplicate.
      */
     val entryType: EntryType,
+
+    /**
+     * Whether the caller can actually get a [Notice] to the hunter. **False means: charge, but do
+     * not claim the warning.**
+     *
+     * A notice is issued at most once per depletion cycle (the `warning_level` claim), so handing
+     * one to a caller that cannot deliver it does not delay the warning — it *loses* it. That is
+     * exactly what would happen for every photo: `recognition` charges first, so it is the charge
+     * that crosses the low-balance threshold, and recognition sends no SMS. It therefore asks for
+     * no notice and the following `SMS_DEBIT` claims the warning, which is the charge that has an
+     * alert to append it to.
+     *
+     * Defaults to true, which is right for `notification` (it is sending an SMS anyway) and keeps
+     * the field optional on the wire.
+     */
+    val canDeliverNotice: Boolean = true,
 )
 
 /**

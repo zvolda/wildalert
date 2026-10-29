@@ -368,6 +368,15 @@ deployed.
   deployed, both push subscriptions exist, and a real emailed photo produced an SMS nine seconds
   later. `image.received.inspect`, the pull subscription used to read events while there was no
   consumer, was deleted the same day; recognition's own log now shows what it received.
+- **A new recognition revision for credit slice 4, and one grant.** Since that slice recognition
+  charges `RECOGNITION_DEBIT` (100 haléře) per photo before the model runs, which needs
+  `USER_ACCOUNT_BASE_URL` + `USER_ACCOUNT_AUTH=gcp-id-token` on the service and
+  `roles/run.invoker` on **user-account** for `wildalert-recognition` — a grant it does not hold
+  yet. Deploy the image **before or with** those: a revision that cannot reach user-account
+  dead-letters every photo after five attempts while looking perfectly healthy. Step 10f in
+  `CONSOLE.md` has the exact values. The running revision (`recognition-00003-fl9`) predates the
+  charge, so until this is done nothing charges for inference and the 2500 trial buys sixteen
+  alerts instead of ten.
 - **`roles/run.invoker` on user-account for notification**, once it exists (email-ingestion's is
   part of its own deploy).
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at

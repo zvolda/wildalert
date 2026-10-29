@@ -21,6 +21,7 @@ from app.classifier import (
     get_classifier,
 )
 from app.config import Settings, get_settings
+from app.credit import get_credit_client
 from app.push import router as push_router
 
 # uvicorn configures only its own loggers, so without this the service's own INFO lines (the push
@@ -36,14 +37,19 @@ log = logging.getLogger("recognition")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Loads the model before the service accepts traffic.
+    """Loads the model and builds the credit client before the service accepts traffic.
 
     DeepFaune takes about a minute to load. Doing it here means Cloud Run's startup probe holds
     traffic until it is ready, instead of the first pushed message waiting on the weights and
     risking its acknowledgement deadline.
+
+    The credit client is built here for a different reason: it mints the ID token for user-account,
+    and a credential that cannot be minted should fail the revision at startup rather than turn up
+    as a 500 on the first real photo. It opens no connection.
     """
     log.info("Loading classifier at startup")
     get_classifier()
+    get_credit_client()
     yield
 
 
