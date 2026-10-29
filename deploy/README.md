@@ -96,19 +96,29 @@ else. **Set no `SIGNUP_GRANT_MINOR` on this service**; unset is the intended con
 the grant on later, once Cloudflare Turnstile or a rate-limit rule is in front of the form. See
 `CONSOLE.md` step 10h.
 
-### `wildalert.app` — the Cloudflare Worker in front of the gateway (deployed, DNS pending)
+### `wildalert.app` — the Cloudflare Worker in front of the gateway (**live** 2026-10-29)
 
-**Worker deployed 2026-10-29** (version `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`) with both routes
-attached. **The site is not live yet**: the apex still has no A/AAAA record, so nothing resolves
-and the routes never fire. The two proxied `AAAA → 100::` records are the switch.
+**`https://wildalert.app` serves the registration form.** Deployed 2026-10-29, version
+`d5bdc52a-5800-42cc-bd8c-8274af033a54`; `www` and plain http 301 to it, `POST /api/hunters`
+reaches the private user-account through the gateway's ID token (verified: 400 from validation,
+not 403), and the phone-number lookup endpoints 404 at the gateway as designed.
 
 | Setting | Value |
 |---|---|
-| Worker | `wildalert-site`, from `deploy/site-worker/`, routes `wildalert.app/*` and `www.wildalert.app/*` |
+| Worker | `wildalert-site`, from `deploy/site-worker/` |
+| Triggers | **Workers Custom Domains** `wildalert.app` and `www.wildalert.app` — all paths |
 | Vars | `ORIGIN_HOST=gateway-lznkorfm4q-ey.a.run.app`, `CANONICAL_HOST=wildalert.app` — committed in `wrangler.toml` |
 | Secrets | none required. `ORIGIN_SECRET` is optional and inert until the gateway demands it |
-| DNS | AAAA `@` and `www` → `100::`, both **Proxied**. MX and SPF untouched |
+| DNS | **Cloudflare's, not ours.** A Custom Domain has it create the records and the certificate server-side. MX and SPF untouched — confirmed after the deploy |
 | Cost | **€0** — Workers free tier, 100,000 requests/day |
+
+**Custom Domains rather than path routes, because that is what can be deployed.** A route only
+fires on a hostname that already has a proxied DNS record; `wrangler` has no DNS command and its
+stored OAuth token is `zone:read`, so a route setup would permanently end in "now click two
+records". Custom Domains are created through the Workers API, which those scopes cover — so
+`wrangler deploy` is the whole setup, and `src/worker.js` does the http→https redirect that
+`Always Use HTTPS` would otherwise have been needed for. Zone WAF and rate-limiting rules still
+apply to these hostnames, so nothing about the abuse-control plan changes.
 
 **Why a worker and not a domain mapping.** Cloud Run routes by Host header, so a proxied record
 aimed at the gateway arrives as `Host: wildalert.app`, matches no service and 404s. Cloud Run's
@@ -373,9 +383,8 @@ deployed.
 - **The last three Cloudflare clicks**: `wrangler deploy` the Email Worker, point the catch-all at
   it, and set `INBOUND_EMAIL_DOMAIN=wildalert.app` on user-account. No tokens need regenerating —
   only the token is stored, the domain comes from config. **All done 2026-10-20.**
-- **The site on `wildalert.app`**: the worker is **deployed** (2026-10-29) and the gateway went up
-  the same day (`gateway-00001-p5f`). **What is left is two proxied `AAAA → 100::` records and two
-  SSL toggles**, both dashboard-only — `wrangler` has no DNS command and its stored OAuth token is
-  `zone:read`, so neither can be scripted with it. `CONSOLE.md` step 11c.
+- **The site on `wildalert.app`**: **done 2026-10-29.** The gateway went up the same day
+  (`gateway-00001-p5f`) and the worker fronting it is live on the apex and `www`, verified end to
+  end. `CONSOLE.md` step 11c. Nothing outstanding — the domain needs no dashboard state.
 
 The broker decision is **settled**: Cloud Pub/Sub push, Kafka removed from the repo (2026-10-08).

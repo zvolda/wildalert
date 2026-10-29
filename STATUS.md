@@ -1107,21 +1107,43 @@ and is switched on by the next.
 - **The site on `wildalert.app` (2026-10-29): a Cloudflare Worker, because Cloud Run cannot map
   the domain here.** The gateway went up the same day (`gateway-00001-p5f`, SA
   `wildalert-gateway@`, image `:a2bd22f`) and serves the registration form on its `run.app` URL;
-  this slice is the domain in front of it. **The worker is deployed** (2026-10-29, version
-  `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`, 1.27 KiB, 2 ms startup) with both routes attached; the
-  site is **not live yet** because the apex still has no A/AAAA record.
-  - **Worker before DNS, and the runbook was rewritten to say so.** It was first written DNS-first.
-    Both routes attached while the apex had no address record at all, which proves routes are inert
-    rather than invalid without one — so deploying first makes the DNS record a single clean
-    switch, where the other order leaves a window of `wildalert.app` resolving to the discard
-    prefix and hanging. Verified inert afterwards: no A/AAAA from 1.1.1.1 and `curl` returns `000`.
-  - **The last two steps cannot be scripted with `wrangler`.** It has no DNS-record command, and
-    the OAuth token `wrangler login` stores carries **`zone:read`** — no `dns_records:write`, no
-    zone-settings scope. The two `AAAA → 100::` records and the SSL toggles are dashboard clicks,
-    or they need a separate API token with *Zone → DNS → Edit* and *Zone → Zone Settings → Edit*.
-    Worth knowing before planning any further Cloudflare automation in this project.
-  - **Noted in passing:** that same token is missing the `challenge-widgets.write` scope, which is
-    Turnstile's — so standing Turnstile up will mean a fresh `wrangler login` or dashboard work.
+  this slice is the domain in front of it. **`https://wildalert.app` is live** (2026-10-29,
+  version `d5bdc52a-5800-42cc-bd8c-8274af033a54`, 1.27 KiB, 1 ms startup).
+  - **Workers Custom Domains, not path routes — and the reason is what can be automated.** The
+    first attempt was two path routes plus two hand-made proxied `AAAA → 100::` records, which is
+    the usual recipe and *cannot be deployed from here*: a route only fires on a hostname that
+    already has a proxied record, `wrangler` has no DNS-record command, and the OAuth token
+    `wrangler login` stores carries **`zone:read`** — no `dns_records:write`, no zone-settings
+    scope. A **Custom Domain** has Cloudflare create the record and issue the certificate
+    *server-side* through the **Workers** API, which those scopes do cover. So `wrangler deploy`
+    became the entire setup and the DNS is not ours to maintain. The intermediate state is on the
+    record in this repo's history: the route version was deployed first and genuinely did leave
+    two dashboard clicks behind.
+  - **`Always Use HTTPS` went into the worker for the same reason.** It is a zone setting, equally
+    out of reach, so `src/worker.js` does the http→https redirect itself — folded into the same
+    hop as www→apex, so `http://www/x?a=1` reaches `https://wildalert.app/x?a=1` in **one** 301,
+    not two. The upshot: `deploy/site-worker/` is the complete configuration of the domain, with
+    no dashboard state behind it.
+  - **Verified live, all of it:** apex 200 serving `<title>WildAlert — Register</title>`; `www`
+    and plain http 301 with path and query preserved; `GET /api/hunters/by-email` **404** at the
+    gateway (the allowlist); and `POST /api/hunters` with `{}` → **400** from user-account's
+    validation. That 400 is the whole chain in one number — worker → gateway → ID token →
+    *private* user-account — and **it deliberately leaves no hunter row behind**, where registering
+    through the form would. A 403 there would have meant the ID token was rejected, a 404 that the
+    gateway never routed it.
+  - **Email checked rather than assumed:** all three `route{1,2,3}.mx.cloudflare.net` still
+    resolve and the catch-all still reports `Enabled: true` / `worker: wildalert-email-in`. An
+    A/AAAA record cannot affect MX, but the zone in question is the one the product receives
+    photos on, so it was worth one command.
+  - **Two local gotchas worth remembering.** Wrangler needs **Node ≥ 22** and this checkout
+    defaults to 20 — invoking `v23.11.1`'s `node.exe` directly avoids switching the global `nvm`
+    symlink out from under everything else. And `curl` exited 6 ("could not resolve host")
+    straight after the deploy while `1.1.1.1` already had the record: a stale *negative* cache
+    locally, not a broken deploy. `--resolve` pins the address to test through it, and still
+    verifies the certificate.
+  - **Noted in passing:** the token is missing `challenge-widgets.write`, which is Turnstile's —
+    so standing Turnstile up will mean a fresh `wrangler login`. `wrangler turnstile` exists
+    (alpha), so it may well be scriptable when that slice comes.
   - **Cloud Run routes by Host header**, so a proxied DNS record aimed at the gateway arrives as
     `Host: wildalert.app`, matches no service and 404s. Teaching Cloud Run the hostname is exactly
     what a *domain mapping* does — and it does **not exist in `europe-west3`**, and Google labels

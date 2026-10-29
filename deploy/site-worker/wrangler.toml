@@ -19,13 +19,24 @@ workers_dev = false
 # Both hostnames hit the same script: the apex serves the site, www 301s to the apex. The worker
 # decides which, so there is no Cloudflare redirect rule to keep in sync with the code.
 #
-# A route only attaches if the hostname has a PROXIED DNS record, which is why step 11c creates an
-# AAAA to the 100:: discard prefix for each. The record's content is never used -- the worker
-# answers before anything is dialled -- but without a record Cloudflare has no hostname to hang
-# the route on, and without the orange cloud the request never reaches a worker at all.
+# `custom_domain = true`, not a path route, and that choice is what makes this deployable with
+# nothing but `wrangler deploy`. A plain route needs a proxied DNS record to already exist, and
+# neither wrangler nor the OAuth token it stores can create one (no DNS command; `zone:read`
+# only), so a route would leave two dashboard clicks behind. A **Custom Domain** has Cloudflare
+# create the DNS record and issue the certificate server-side, off the Workers API, which those
+# scopes do cover. It also points *every* path at the worker, which is what we want -- the worker
+# proxies the whole site.
+#
+# Zone WAF and rate-limiting rules still apply to these hostnames, so the abuse-control plan is
+# unaffected. The usual caveat -- that Cloudflare may count a worker's subrequest against a rate
+# limit when it stays on the same zone -- does not apply here: the subrequest goes to *.run.app,
+# which is not this zone.
+#
+# Limits worth knowing: a Custom Domain cannot be created over an existing CNAME on that
+# hostname (both were bare, only MX on the apex), and it does not support wildcards.
 routes = [
-  { pattern = "wildalert.app/*", zone_name = "wildalert.app" },
-  { pattern = "www.wildalert.app/*", zone_name = "wildalert.app" },
+  { pattern = "wildalert.app", custom_domain = true },
+  { pattern = "www.wildalert.app", custom_domain = true },
 ]
 
 # Not sensitive, and worth seeing in a diff when they change, so these are vars not secrets.

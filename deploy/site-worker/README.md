@@ -4,8 +4,8 @@
  browser
         |  https://wildalert.app/            (www.wildalert.app 301s here)
         v
- Cloudflare edge   (proxied AAAA -> 100::, so the route attaches)
-        |  Worker  (src/worker.js) -- rewrites the Host header
+ Cloudflare edge   (Workers Custom Domain -- Cloudflare owns the DNS record and the cert)
+        |  Worker  (src/worker.js) -- forces https, canonicalises the host, rewrites Host
         v
  https://gateway-lznkorfm4q-ey.a.run.app/    Host: gateway-lznkorfm4q-ey.a.run.app
         |
@@ -53,68 +53,108 @@ Routing, the apex catch-all and every hunter address keep working exactly as bef
 [`../email-worker/README.md`](../email-worker/README.md). The two workers share a zone and
 nothing else: one has an `email` handler and no routes, this one has a `fetch` handler and two.
 
-## The AAAA to `100::` is not a mistake
+## Custom Domains, not path routes — and why that is the whole deployment story
 
-A Workers route only attaches to a hostname that has a **proxied** DNS record. The worker answers
-before anything is dialled, so the record's content is never used — the convention is therefore to
-point it at the IPv6 discard prefix `100::`, which is unroutable on purpose. A real address there
-would be misleading, and leaving the record out means the route silently never fires.
+This started as two path routes (`wildalert.app/*`) plus two hand-made proxied `AAAA → 100::`
+records, which is the usual recipe. It was changed because that recipe **cannot be deployed from
+here**: a path route only fires on a hostname that already has a proxied DNS record, `wrangler`
+has no DNS-record command, and the OAuth token `wrangler login` stores carries **`zone:read`** —
+no `dns_records:write`. So every deploy would have ended with "now go and click two records".
 
-Both records must be **Proxied** (orange cloud). Grey-clouded, the request goes straight to
-`100::` and times out.
+A **Workers Custom Domain** has Cloudflare create the DNS record and issue the certificate
+*server-side*, through the Workers API — which those scopes do cover. The result is that
+`wrangler deploy` is the entire setup, and the DNS records are not ours to maintain or get wrong.
+
+What the swap changes in practice:
+
+- **All paths go to the worker**, not a chosen prefix. That is what we wanted anyway — the worker
+  proxies the whole site.
+- **No `100::` placeholder and no orange-cloud toggle to forget.** Cloudflare points the record at
+  the Workers platform itself.
+- **Zone WAF and rate-limiting rules still apply** to these hostnames, so the abuse-control plan
+  is untouched. The usual gotcha — Cloudflare counting a worker's own subrequest against a rate
+  limit — does not apply here, because the subrequest leaves for `*.run.app`, which is not this
+  zone. (If it ever pointed back at this zone, the rule would need `cf.worker.upstream_zone`.)
+- **Limits accepted:** a Custom Domain cannot be created over an existing CNAME on that hostname
+  (both were bare — the apex had only MX), and it does not support wildcards. Neither matters
+  here.
+
+**`Always Use HTTPS` is not needed either.** It is a zone setting, equally out of reach, so
+`src/worker.js` does the http→https redirect itself — in the same hop as the www→apex one. The
+upshot is that this directory is the complete configuration of the domain: there is no dashboard
+state behind it.
 
 ## Setup
 
 1. **Deploy the gateway first.** The worker needs its URL, and a cold 503 from Cloud Run is
    indistinguishable here from a Cloudflare problem. **Done** — `gateway` in `europe-west3`,
    `https://gateway-lznkorfm4q-ey.a.run.app`, health 200 and the registration form served at `/`.
-2. **Deploy the worker first. Done 2026-10-29** — `wildalert-site`, version
-   `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`, 1.27 KiB, startup 2 ms.
+2. **Deploy the worker. That is the whole setup. Done 2026-10-29** — `wildalert-site`, version
+   `d5bdc52a-5800-42cc-bd8c-8274af033a54`, 1.27 KiB, startup 1 ms.
    ```bash
    cd deploy/site-worker
    npx wrangler deploy
    ```
-   Unlike the email worker this one *has* routes, so `wrangler deploy` attaches them and exits 0.
+   Both Custom Domains attach, Cloudflare creates the `wildalert.app` and `www.wildalert.app`
+   records and issues the certificates, and the site is live. No DNS clicks, no SSL toggles —
+   see the section above for why it is built this way.
+
    If it complains about a workers.dev subdomain, `workers_dev = false` has gone missing from
    `wrangler.toml`.
 
-   **The worker goes before the DNS, not after** — this was originally written the other way
-   round. Routes attach happily to a hostname that has no DNS record yet (confirmed: both
-   attached while the apex had no A/AAAA at all); they simply never fire. Do it in this order and
-   the record is the single switch that turns the site on. Do it the other way and there is a
-   window where `wildalert.app` resolves to the discard prefix and hangs.
-3. **DNS** (dashboard → the zone → DNS → Records). Add both, **Proxied**. This is the step that
-   makes the site live:
-
-   | Type | Name | Content | Proxy |
-   |---|---|---|---|
-   | AAAA | `@` | `100::` | Proxied |
-   | AAAA | `www` | `100::` | Proxied |
-
-   Leave the MX and SPF records alone.
-4. **SSL/TLS → Overview → Full (strict)**, and **Edge Certificates → Always Use HTTPS → On**.
-   Universal SSL already covers `wildalert.app` and `*.wildalert.app`, so there is no certificate
-   to request. Strict costs nothing here: the only origin is `*.run.app`, which Google serves with
-   a publicly valid certificate.
-5. **Optional, a flood brake:** Security → WAF → Rate limiting rules → one rule on path
+   **On a machine with Node older than 22**, wrangler refuses to run (`nvm list` to see what is
+   installed; this project's main checkout runs on 20). Invoking a newer Node directly avoids
+   switching the global nvm symlink:
+   ```bash
+   "$LOCALAPPDATA/nvm/v23.11.1/node.exe" ./node_modules/wrangler/bin/wrangler.js deploy
+   ```
+3. **Nothing else.** The two steps that a path-route setup would have needed — the proxied DNS
+   records and `Always Use HTTPS` — are gone by construction: Cloudflare owns the records, and the
+   worker does the https redirect itself.
+4. **Optional, a flood brake:** Security → WAF → Rate limiting rules → one rule on path
    `/api/hunters`. Read the limits below before expecting much of it.
 
 ## Verifying
 
+All of the following were run and passed on 2026-10-29, right after the deploy above.
+
 ```bash
-curl -sI https://wildalert.app/ | head -1                      # 200
-curl -s https://wildalert.app/ | grep -o '<title>.*</title>'   # WildAlert — Register
-curl -sI https://www.wildalert.app/ | grep -iE 'HTTP|location' # 301 -> https://wildalert.app/
-curl -sI https://wildalert.app/api/hunters/by-email             # 404, and nothing in user-account's logs
+curl -sI https://wildalert.app/ | head -1                       # 200
+curl -s  https://wildalert.app/ | grep -o '<title>.*</title>'   # WildAlert — Register
+curl -sI https://www.wildalert.app/ | grep -iE 'HTTP|location'  # 301 -> https://wildalert.app/
+curl -sI http://wildalert.app/x?a=1                             # 301 -> https://wildalert.app/x?a=1
+curl -sI http://www.wildalert.app/x?a=1                         # 301 -> https://wildalert.app/x?a=1  (one hop)
+curl -sI https://wildalert.app/api/hunters/by-email              # 404, and nothing in user-account's logs
 ```
 
+**If `curl` exits 6 ("could not resolve host") right after the deploy**, that is the local
+resolver still holding the old negative answer, not a broken deploy — Cloudflare's own resolver
+had the record immediately. Check with `nslookup wildalert.app 1.1.1.1`, and pin the address to
+test through it meanwhile:
+
+```bash
+curl -s --resolve wildalert.app:443:104.21.0.141 https://wildalert.app/ | head -1
+```
+
+That form still verifies the certificate properly, so a clean run also proves the Custom Domain's
+cert is valid for the hostname.
+
+- **The full chain, without creating a hunter:** `POST /api/hunters` with `{}` should answer
+  **400** from user-account's validation. 400 proves the request went worker → gateway → ID token
+  → *private* user-account; a **403** would mean the ID token was rejected, and a **404** that the
+  gateway never routed it. Verified: 400.
+  ```bash
+  curl -s -X POST -H 'content-type: application/json' -d '{}' https://wildalert.app/api/hunters
+  ```
+  Registering a real hunter through the form is still the nicest end-to-end check — it just
+  leaves a row behind, so it is not the one to reach for first.
 - `npx wrangler tail` streams the worker's logs. A 404 on `/` with a 200 from the `run.app` URL
-  means the Host rewrite is not happening; a 502 means the gateway is.
-- **Register a hunter through the form on the real domain.** That is the only check that exercises
-  the whole path — worker → gateway → ID token → private user-account — and the inbound address it
-  returns should read `<token>@wildalert.app`.
-- Confirm email still works afterwards: send a photo to a hunter's address and watch
-  `npx wrangler tail` in `deploy/email-worker`. The DNS change should be invisible to it.
+  means the Host rewrite is not happening; a 502 means the gateway is down.
+- **Email is unaffected, and that was checked rather than assumed:** all three
+  `route{1,2,3}.mx.cloudflare.net` records still resolve, and
+  `wrangler email routing rules get wildalert.app catch-all` still reports
+  `Enabled: true` / `worker: wildalert-email-in`. Adding the web records cannot touch MX, but it
+  costs one command to know.
 
 ## Known limits
 

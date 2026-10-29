@@ -42,10 +42,20 @@ export default {
 
     const url = new URL(request.url);
 
-    // Any hostname on the route list that is not the canonical one gets sent there, path and
-    // query intact. 301 because the choice of apex is not expected to change.
-    if (url.hostname !== env.CANONICAL_HOST) {
+    // One redirect handles both "not HTTPS" and "not the canonical hostname", so http://www/x
+    // reaches https://wildalert.app/x in a single hop rather than two. Path and query are
+    // carried over, and 301 because neither the scheme nor the choice of apex is going to change.
+    //
+    // **The HTTPS half is deliberately here and not Cloudflare's "Always Use HTTPS" toggle.**
+    // That is a zone setting, and the credentials this worker deploys with cannot reach zone
+    // settings -- so doing it in code is both the only self-contained option and the one that
+    // leaves nothing to remember in a dashboard.
+    if (url.protocol !== 'https:' || url.hostname !== env.CANONICAL_HOST) {
+      url.protocol = 'https:';
       url.hostname = env.CANONICAL_HOST;
+      // Clearing the port matters: an http request carries :80, which would otherwise survive
+      // into the https URL and produce a redirect to https://wildalert.app:80/.
+      url.port = '';
       return Response.redirect(url.toString(), 301);
     }
 
