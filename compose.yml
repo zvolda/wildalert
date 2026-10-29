@@ -162,6 +162,16 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-wildalert.local}
+      # The free trial: 2500 haléře = 25 CZK, which is ten alerts with their recognition at
+      # 100 + 150 each. Set here explicitly because the application default is 0 and stays 0 --
+      # an unset variable must never hand out credit (SignupGrantDefaultTest pins that).
+      #
+      # **Local dev only for now.** Do not copy this onto the Cloud Run revision yet: the gateway
+      # is live and its run.app URL is publicly reachable, so any Cloudflare rule on wildalert.app
+      # can be walked around by calling that URL directly. Until Turnstile is in front (or the
+      # origin is closed with x-origin-secret), a non-zero grant makes every scripted signup worth
+      # real SMS spend. See STATUS.md, credit slice 3.
+      SIGNUP_GRANT_MINOR: ${SIGNUP_GRANT_MINOR:-2500}
     ports:
       - "8081:8081"
     depends_on:

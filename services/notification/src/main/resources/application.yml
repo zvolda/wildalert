@@ -43,6 +43,17 @@ services:
     # set USER_ACCOUNT_AUTH=gcp-id-token there. Locally there is nothing to authenticate to.
     auth: ${USER_ACCOUNT_AUTH:none}
 
+billing:
+  # What one alert costs the hunter, in CZK minor units (haléře). We pay GoSMS 1.20 per message,
+  # so 1.50 covers it with a small margin. It travels to user-account on every charge, because
+  # this service is the one that knows what an SMS costs -- user-account charges what it is told.
+  #
+  # Unlike the signup grant, a default is safe here and 150 is the documented price: forgetting
+  # the variable charges the normal amount rather than giving alerts away. A 0 would be rejected
+  # by the endpoint's @Min(1) anyway, so a missing price fails loudly instead of running free.
+  # Pinned by SmsCostDefaultTest, so a change is a deliberate act and not a stray edit.
+  sms-cost-minor: ${SMS_COST_MINOR:150}
+
 events:
   # 'none' (default — no push endpoint, the app runs without a broker) or 'pubsub'.
   # Which topic feeds us is the subscription's business, not ours, so there is no topic setting:
