@@ -1107,8 +1107,21 @@ and is switched on by the next.
 - **The site on `wildalert.app` (2026-10-29): a Cloudflare Worker, because Cloud Run cannot map
   the domain here.** The gateway went up the same day (`gateway-00001-p5f`, SA
   `wildalert-gateway@`, image `:a2bd22f`) and serves the registration form on its `run.app` URL;
-  this slice is the domain in front of it. Written and documented, **not yet deployed** — it needs
-  two DNS records and a `wrangler deploy`, both of which are Cloudflare-side.
+  this slice is the domain in front of it. **The worker is deployed** (2026-10-29, version
+  `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`, 1.27 KiB, 2 ms startup) with both routes attached; the
+  site is **not live yet** because the apex still has no A/AAAA record.
+  - **Worker before DNS, and the runbook was rewritten to say so.** It was first written DNS-first.
+    Both routes attached while the apex had no address record at all, which proves routes are inert
+    rather than invalid without one — so deploying first makes the DNS record a single clean
+    switch, where the other order leaves a window of `wildalert.app` resolving to the discard
+    prefix and hanging. Verified inert afterwards: no A/AAAA from 1.1.1.1 and `curl` returns `000`.
+  - **The last two steps cannot be scripted with `wrangler`.** It has no DNS-record command, and
+    the OAuth token `wrangler login` stores carries **`zone:read`** — no `dns_records:write`, no
+    zone-settings scope. The two `AAAA → 100::` records and the SSL toggles are dashboard clicks,
+    or they need a separate API token with *Zone → DNS → Edit* and *Zone → Zone Settings → Edit*.
+    Worth knowing before planning any further Cloudflare automation in this project.
+  - **Noted in passing:** that same token is missing the `challenge-widgets.write` scope, which is
+    Turnstile's — so standing Turnstile up will mean a fresh `wrangler login` or dashboard work.
   - **Cloud Run routes by Host header**, so a proxied DNS record aimed at the gateway arrives as
     `Host: wildalert.app`, matches no service and 404s. Teaching Cloud Run the hostname is exactly
     what a *domain mapping* does — and it does **not exist in `europe-west3`**, and Google labels

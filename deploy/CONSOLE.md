@@ -1243,9 +1243,21 @@ header, for €0.
 every `<token>@wildalert.app` keep working through step 11b's worker. Two workers, one zone, no
 overlap: that one has an `email` handler and no routes, this one has a `fetch` handler and two.
 
-**In this order:**
+**In this order — worker first, DNS second.** Routes attach fine to a hostname with no DNS record
+and simply never fire, so deploying first makes the DNS record the single switch that turns the
+site on. The other order leaves a window where `wildalert.app` resolves to the discard prefix and
+hangs.
 
-1. **DNS** → the zone → DNS → Records. Two records, both **Proxied** (orange cloud):
+1. **Deploy the worker. Done 2026-10-29** — `wildalert-site`, version
+   `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`. Both routes attached while the apex still had no
+   A/AAAA, which is what proved the ordering above.
+   ```bash
+   cd deploy/site-worker && npx wrangler deploy
+   ```
+   It has routes, so unlike the email worker this exits 0 and attaches them.
+
+2. **DNS** → the zone → DNS → Records. Two records, both **Proxied** (orange cloud). **This is the
+   step that makes the site live:**
 
    | Type | Name | Content | Proxy |
    |---|---|---|---|
@@ -1257,11 +1269,10 @@ overlap: that one has an `email` handler and no routes, this one has a `fetch` h
    dialled, so the content is never used. **Grey-clouded, the request goes to `100::` and hangs.**
    Do not touch the MX or SPF rows.
 
-2. **Deploy the worker:**
-   ```bash
-   cd deploy/site-worker && npx wrangler deploy
-   ```
-   It has routes, so unlike the email worker this exits 0 and attaches them.
+   **Not doable from the CLI:** `wrangler` has no DNS-record command, and the OAuth token
+   `wrangler login` stores carries `zone:read` only — no `dns_records:write` and no zone-settings
+   scope. So this step and step 3 are dashboard clicks, or they need a separate API token with
+   *Zone → DNS → Edit* and *Zone → Zone Settings → Edit*.
 
 3. **SSL/TLS → Overview → Full (strict)** and **Edge Certificates → Always Use HTTPS → On**.
    Universal SSL already covers the apex and `*.wildalert.app`; nothing to request. Strict is free

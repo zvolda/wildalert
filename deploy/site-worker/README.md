@@ -68,15 +68,8 @@ Both records must be **Proxied** (orange cloud). Grey-clouded, the request goes 
 1. **Deploy the gateway first.** The worker needs its URL, and a cold 503 from Cloud Run is
    indistinguishable here from a Cloudflare problem. **Done** — `gateway` in `europe-west3`,
    `https://gateway-lznkorfm4q-ey.a.run.app`, health 200 and the registration form served at `/`.
-2. **DNS** (dashboard → the zone → DNS → Records). Add both, **Proxied**:
-
-   | Type | Name | Content | Proxy |
-   |---|---|---|---|
-   | AAAA | `@` | `100::` | Proxied |
-   | AAAA | `www` | `100::` | Proxied |
-
-   Leave the MX and SPF records alone.
-3. **Deploy the worker:**
+2. **Deploy the worker first. Done 2026-10-29** — `wildalert-site`, version
+   `eaa4d36d-dcf1-4c6a-8cc2-23c5b592fbfb`, 1.27 KiB, startup 2 ms.
    ```bash
    cd deploy/site-worker
    npx wrangler deploy
@@ -84,6 +77,21 @@ Both records must be **Proxied** (orange cloud). Grey-clouded, the request goes 
    Unlike the email worker this one *has* routes, so `wrangler deploy` attaches them and exits 0.
    If it complains about a workers.dev subdomain, `workers_dev = false` has gone missing from
    `wrangler.toml`.
+
+   **The worker goes before the DNS, not after** — this was originally written the other way
+   round. Routes attach happily to a hostname that has no DNS record yet (confirmed: both
+   attached while the apex had no A/AAAA at all); they simply never fire. Do it in this order and
+   the record is the single switch that turns the site on. Do it the other way and there is a
+   window where `wildalert.app` resolves to the discard prefix and hangs.
+3. **DNS** (dashboard → the zone → DNS → Records). Add both, **Proxied**. This is the step that
+   makes the site live:
+
+   | Type | Name | Content | Proxy |
+   |---|---|---|---|
+   | AAAA | `@` | `100::` | Proxied |
+   | AAAA | `www` | `100::` | Proxied |
+
+   Leave the MX and SPF records alone.
 4. **SSL/TLS → Overview → Full (strict)**, and **Edge Certificates → Always Use HTTPS → On**.
    Universal SSL already covers `wildalert.app` and `*.wildalert.app`, so there is no certificate
    to request. Strict costs nothing here: the only origin is `*.run.app`, which Google serves with

@@ -44,4 +44,8 @@ Thumbs.db
 
 # Wrangler's local cache (account id + name). Not a credential -- the OAuth token lives in
 # %APPDATA%/xdg.config/.wrangler -- but it is machine state, not source.
-deploy/email-worker/.wrangler/
+#
+# Unanchored on purpose: wrangler writes this next to whichever directory it is invoked from, so
+# `wrangler deploy --config deploy/site-worker/wrangler.toml` run from the repo root drops one at
+# the root. Naming each worker's folder would keep missing those.
+.wrangler/
