@@ -29,15 +29,27 @@ server:
   port: ${PORT:8081}
 
 billing:
-  # What a new hunter starts with, in CZK minor units (haléře). 2500 is ten alerts with their
-  # recognition (100 + 150 each) -- in practice fewer, because every photo pays the 100 whether
-  # or not it alerts.
+  # What a new hunter starts with, in CZK minor units (haléře).
   #
-  # This is also the entire abuse budget of an unauthenticated registration form: at 2500 a
-  # scripted signup costs 25 CZK. Set SIGNUP_GRANT_MINOR=0 the day someone finds the form. Rate
-  # limiting (Turnstile or a Cloudflare rule) is the real fix and is a prerequisite for leaving
-  # this non-zero once the gateway is public.
-  signup-grant-minor: ${SIGNUP_GRANT_MINOR:2500}
+  # **Zero by default, deliberately** (decided 2026-10-29, before the gateway's first deploy).
+  # Registration is unauthenticated and unthrottled, so this value is the entire abuse budget of
+  # a public form: at 2500 -- ten alerts with their recognition, at 100 + 150 each -- a scripted
+  # signup is worth 25 CZK, and roughly sixteen abusive accounts could drain a 200 CZK GoSMS
+  # balance. Draining it is the real damage, not the money: once GoSMS is empty, *paying* hunters
+  # get no alerts, and for a product whose only output is an SMS that is a silent outage.
+  #
+  # The default is 0 rather than 2500-with-an-override because forgetting an env var should cost
+  # nothing rather than give credit away. This project has been bitten by must-set config before
+  # (INBOUND_EMAIL_DOMAIN, slice 13: unset, and nobody was ever texted).
+  #
+  # Turn it on with SIGNUP_GRANT_MINOR once there is rate limiting in front of the form --
+  # Cloudflare Turnstile, or a Cloudflare rate-limit rule. A grant of 0 still writes a credit row
+  # and a SIGNUP_GRANT ledger entry of 0, so every hunter has a balance and nothing downstream
+  # needs a special case.
+  #
+  # Note V4's backfill granted 2500 to the hunters that existed when it ran. That is history, not
+  # the default -- the migration is applied and must not be edited.
+  signup-grant-minor: ${SIGNUP_GRANT_MINOR:0}
 
   # Below this balance, a charge reports LOW_BALANCE once, so the warning can be appended to an
   # alert that is going out anyway rather than costing an SMS of its own. 500 haléře is two

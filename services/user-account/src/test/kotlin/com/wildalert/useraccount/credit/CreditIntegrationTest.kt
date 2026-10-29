@@ -24,7 +24,10 @@ import java.util.UUID
  * repository beans, so a constraint violation surfaces as `DataIntegrityViolationException`
  * there, while `EntityManager.flush()` throws an untranslated JPA `PersistenceException`.
  */
-@SpringBootTest
+// The grant is pinned rather than inherited: its default is 0 in production (a public
+// registration form must not hand out credit), and these tests assert on the balance it
+// produces, so they state the value they need instead of tracking a production default.
+@SpringBootTest(properties = ["billing.signup-grant-minor=2500"])
 @Transactional
 class CreditIntegrationTest {
 

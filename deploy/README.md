@@ -85,11 +85,13 @@ user-account's lookup endpoints (`by-email`, `by-inbound-address`, `GET /api/hun
 return a hunter's phone number and are deliberately *not* proxied; a wildcard route would have
 published all three.
 
-**The thing to decide before deploying:** registration is unauthenticated and unthrottled. That was
-acceptable while nothing was public. Deploying this makes it reachable, and every signup is a
-Cloud SQL row and a future SMS cost. `max-instances` caps spend, not request rate. Cloudflare
-Turnstile on the form (free, the account is already on Cloudflare) or a Cloudflare rate-limiting
-rule in front is the cheap fix. See `CONSOLE.md` step 10h.
+**Open registration, and why it is affordable:** the register endpoint is unauthenticated and
+unthrottled, and deploying the gateway makes it reachable. `max-instances` caps spend, not request
+rate. What makes it safe is that **the signup grant defaults to 0** — a hunter with no credit
+cannot cost us an SMS or a DeepFaune run, so a scripted signup buys a Cloud SQL row and nothing
+else. **Set no `SIGNUP_GRANT_MINOR` on this service**; unset is the intended configuration. Turn
+the grant on later, once Cloudflare Turnstile or a rate-limit rule is in front of the form. See
+`CONSOLE.md` step 10h.
 
 ### Pub/Sub (topics and the `.dlt.inspect` pull subscriptions exist; push subscriptions wait for the consumers)
 
