@@ -15,3 +15,18 @@ data class SendSmsRequest(
     @field:NotBlank
     val body: String,
 )
+
+/**
+ * Body of `GET /api/sms/credit` — our own balance at the gateway.
+ *
+ * `messagesLeft` is the number an operator actually wants; the haléře are there so the figure can
+ * be checked against the GoSMS panel. Everything but `state` is absent when it does not apply.
+ */
+data class ProviderCreditResponse(
+    /** KNOWN, UNMETERED, UNKNOWN or NOT_REPORTED. */
+    val state: String,
+    val remainingMinor: Long? = null,
+    val currency: String? = null,
+    val messagesLeft: Long? = null,
+    val detail: String? = null,
+)

@@ -5,6 +5,7 @@ import com.wildalert.notification.hunter.ChargeRequest
 import com.wildalert.notification.hunter.HunterCharge
 import com.wildalert.notification.hunter.HunterClient
 import com.wildalert.notification.idempotency.ProcessedEvents
+import com.wildalert.notification.sms.SmsProviderCreditGuard
 import com.wildalert.notification.sms.SmsSender
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -25,11 +26,18 @@ class NotificationService(
     private val processedEvents: ProcessedEvents,
     /** What one alert costs the hunter, in haléře. */
     @Value("\${billing.sms-cost-minor}") private val smsCostMinor: Long,
+    private val providerCredit: SmsProviderCreditGuard,
 ) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun notify(event: AnimalRecognized) {
+        // Our own gateway balance, before a single haléř of the hunter's moves. It throws when the
+        // gateway cannot pay, which 5xxs the push and keeps the alert alive in Pub/Sub — charging
+        // first and discovering the gateway is empty afterwards would bill the hunter for silence,
+        // and this design has no refund path. See SmsProviderCreditGuard.
+        providerCredit.requireCreditForOneMessage()
+
         val charge = chargeFor(event)
         if (charge == null) {
             log.info("No SMS for event {}: nobody to text", event.eventId)

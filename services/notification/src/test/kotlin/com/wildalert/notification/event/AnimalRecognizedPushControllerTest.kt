@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.wildalert.notification.alert.NotificationService
 import com.wildalert.notification.hunter.HunterClient
 import com.wildalert.notification.idempotency.InMemoryProcessedEvents
+import com.wildalert.notification.sms.SmsProviderCreditGuard
 import com.wildalert.notification.sms.SmsSender
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -32,6 +33,7 @@ class AnimalRecognizedPushControllerTest {
             mock(SmsSender::class.java),
             InMemoryProcessedEvents(),
             smsCostMinor = 150,
+            SmsProviderCreditGuard(provider = null),
         ) {
         val received = mutableListOf<AnimalRecognized>()
         var failWith: RuntimeException? = null

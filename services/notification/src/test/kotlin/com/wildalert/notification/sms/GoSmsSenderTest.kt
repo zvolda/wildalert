@@ -157,6 +157,140 @@ class GoSmsSenderTest {
     }
 
     @Test
+    fun `reads our own prepaid balance from the account endpoint, verbatim as GoSMS answers it`() {
+        // Captured live on 2026-10-30 against the real account. The field is currentCredit, in CZK
+        // major units -- the earlier note in STATUS.md called it "credit", which it is not.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andExpect(method(HttpMethod.GET))
+            .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer tok"))
+            .andRespond(
+                withSuccess(
+                    """{"currentCredit":315.21,"invoicingType":"Prepaid","currency":"CZK",""" +
+                        """"channels":[{"id":511762,"name":"SMS channel","sourceNumber":"GoSMS-test"}]}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        val credit = GoSmsSender(builder, props).remaining()
+
+        assertThat(credit).isEqualTo(ProviderCredit.Known(31521, "CZK"))
+        server.verify()
+    }
+
+    @Test
+    fun `the credit read shares the cached token with sending`() {
+        // Which is the whole reason the two live in one class: guarding the balance must not cost
+        // an OAuth round trip per check.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(ExpectedCount.once(), requestTo("https://gosms.test/oauth/v2/token"))
+            .andRespond(tokenResponse("tok-abc"))
+        server.expect(requestTo("https://gosms.test/api/v1/messages/"))
+            .andRespond(withSuccess("""{"id":1}""", MediaType.APPLICATION_JSON))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andRespond(withSuccess("""{"currentCredit":10,"invoicingType":"Prepaid","currency":"CZK"}""", MediaType.APPLICATION_JSON))
+
+        val sender = GoSmsSender(builder, props)
+        sender.send(message)
+        sender.remaining()
+
+        server.verify()
+    }
+
+    @Test
+    fun `a postpaid account has no balance to run out of`() {
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andRespond(
+                withSuccess(
+                    """{"currentCredit":0,"invoicingType":"Postpaid","currency":"CZK"}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertThat(GoSmsSender(builder, props).remaining())
+            .isEqualTo(ProviderCredit.Unmetered("Postpaid"))
+    }
+
+    @Test
+    fun `a balance in another currency is not compared against CZK prices`() {
+        // Our prices are haléře. Treating 20 EUR as 2000 haléře would under-read the balance by a
+        // factor of 25 and block alerts the account could easily pay for.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andRespond(
+                withSuccess(
+                    """{"currentCredit":20.5,"invoicingType":"Prepaid","currency":"EUR"}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertThat(GoSmsSender(builder, props).remaining())
+            .isInstanceOf(ProviderCredit.Unknown::class.java)
+    }
+
+    @Test
+    fun `a response without the fields we need is unknown, not zero`() {
+        // The one mistake that must not happen: reading a changed response as an empty balance
+        // would stop every alert in the product.
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andRespond(withSuccess("""{"balance":"plenty"}""", MediaType.APPLICATION_JSON))
+
+        assertThat(GoSmsSender(builder, props).remaining())
+            .isInstanceOf(ProviderCredit.Unknown::class.java)
+    }
+
+    @Test
+    fun `a non-numeric credit is unknown too`() {
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("tok"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andRespond(
+                withSuccess(
+                    """{"currentCredit":"315.21","invoicingType":"Prepaid","currency":"CZK"}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertThat(GoSmsSender(builder, props).remaining())
+            .isInstanceOf(ProviderCredit.Unknown::class.java)
+    }
+
+    @Test
+    fun `the credit read refreshes a rejected token and retries once, like sending does`() {
+        val builder = RestClient.builder()
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("stale"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer stale"))
+            .andRespond(withStatus(HttpStatus.UNAUTHORIZED))
+        server.expect(requestTo("https://gosms.test/oauth/v2/token")).andRespond(tokenResponse("fresh"))
+        server.expect(requestTo("https://gosms.test/api/v1/"))
+            .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer fresh"))
+            .andRespond(
+                withSuccess(
+                    """{"currentCredit":1.2,"invoicingType":"Prepaid","currency":"CZK"}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+
+        assertThat(GoSmsSender(builder, props).remaining())
+            .isEqualTo(ProviderCredit.Known(120, "CZK"))
+        server.verify()
+    }
+
+    @Test
     fun `a token response with no access_token fails loudly`() {
         // Wrong credentials or a changed contract: throw, so the push 5xxs and Pub/Sub retries
         // rather than silently dropping the hunter's alert.

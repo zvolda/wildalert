@@ -279,6 +279,13 @@ then the async flow, then deploy, then scale.
   - [ ] **Smart SMS** options: target-species-only + daily digest
   - [ ] Daily digest as a scheduled **Cloud Run function** (Cloud Scheduler trigger)
   - [ ] Automatic image expiry: storage **lifecycle rules** (R2/GCS) or a cleanup function
+  - [x] **Guard our own prepaid credit at the SMS gateway** (2026-10-30). GoSMS is prepaid, so an
+        empty account is a silent outage for *paying* hunters — the failure mode the zero signup
+        grant was chosen to postpone, not remove. notification reads the balance from GoSMS's
+        `GET /api/v1/` (`currentCredit`, CZK) and refuses an alert it cannot pay for **before** the
+        hunter is charged, since there is no refund path; `GET /api/sms/credit` answers
+        "will the next alert go out?" without sending anything. Unlike a hunter's `INSUFFICIENT`
+        this is retried rather than acked: topping up fixes it, so the alert is worth keeping.
   - [ ] Structured logging + basic metrics/alerts
   - [ ] Basic auth on internal/admin endpoints
   - [ ] **Strip `roles/editor` from the default compute service account**
