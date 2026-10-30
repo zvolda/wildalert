@@ -22,13 +22,17 @@ import java.time.Instant
  *
  * Active only when `sms.provider=gosms`, so the fake logging sender remains the default and
  * tests never need credentials.
+ *
+ * It also reports **our** prepaid balance ([SmsProviderCredit]), which is why the two live in one
+ * class: both calls need the same hourly token, and sharing the cache means guarding the balance
+ * costs no extra OAuth round trips.
  */
 @Component
 @ConditionalOnProperty(name = ["sms.provider"], havingValue = "gosms")
 class GoSmsSender(
     builder: RestClient.Builder,
     private val props: GoSmsProperties,
-) : SmsSender {
+) : SmsSender, SmsProviderCredit {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -58,6 +62,68 @@ class GoSmsSender(
             log.warn("GoSMS rejected the cached token; refreshing and retrying once")
             post(message, token(forceRefresh = true))
         }
+
+    /**
+     * `GET /api/v1/` is the account endpoint — the same one the channel id came from. Verified
+     * live on 2026-10-30, it answers verbatim:
+     *
+     * ```json
+     * {"currentCredit":315.21,"invoicingType":"Prepaid","currency":"CZK",
+     *  "channels":[{"id":511762,"name":"SMS channel","sourceNumber":"GoSMS-test"}]}
+     * ```
+     *
+     * So the field is `currentCredit` (CZK, major units — not `credit`, and not minor units), and
+     * `invoicingType` is what says whether there is a balance to run out of at all.
+     */
+    override fun remaining(): ProviderCredit =
+        try {
+            readCredit(token())
+        } catch (ex: HttpClientErrorException.Unauthorized) {
+            log.warn("GoSMS rejected the cached token on a credit read; refreshing and retrying once")
+            readCredit(token(forceRefresh = true))
+        }
+
+    private fun readCredit(accessToken: String): ProviderCredit {
+        val response = client.get()
+            .uri("/api/v1/")
+            .header("Authorization", "Bearer $accessToken")
+            .retrieve()
+            .body(JsonNode::class.java)
+        return credit(response)
+    }
+
+    /**
+     * Strict on purpose, unlike [messageId]. A wrong number here either blocks alerts that could
+     * have been sent or lets the account run dry — so anything unexpected becomes
+     * [ProviderCredit.Unknown], which the guard treats as "do not block, but say so loudly".
+     */
+    private fun credit(response: JsonNode?): ProviderCredit {
+        if (response == null) return ProviderCredit.Unknown("GoSMS returned an empty account response")
+
+        val invoicingType = response.path("invoicingType").asText("")
+        if (invoicingType.isBlank()) {
+            return ProviderCredit.Unknown("no invoicingType in the GoSMS account response: $response")
+        }
+        // Anything other than prepaid is billed after the fact, so there is no balance to guard.
+        if (!invoicingType.equals("Prepaid", ignoreCase = true)) {
+            return ProviderCredit.Unmetered(invoicingType)
+        }
+
+        val currency = response.path("currency").asText("")
+        // Our prices are in haléře. A balance in another currency is not something to silently
+        // compare them against — someone changed the account, and that is worth a log line.
+        if (!currency.equals("CZK", ignoreCase = true)) {
+            return ProviderCredit.Unknown("GoSMS credit is in '$currency' but our prices are CZK")
+        }
+
+        val amount = response.path("currentCredit")
+        if (!amount.isNumber) {
+            return ProviderCredit.Unknown("no numeric currentCredit in the GoSMS account response: $response")
+        }
+        // CZK to haléře. Rounded, not truncated: 315.21 is 31521, and a float's 315.2099999 must
+        // not read as 31520.
+        return ProviderCredit.Known(Math.round(amount.asDouble() * 100), currency.uppercase())
+    }
 
     private fun post(message: SmsMessage, accessToken: String): SmsResult {
         val response = client.post()

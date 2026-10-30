@@ -7,6 +7,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.http.MediaType
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -19,6 +20,9 @@ class SmsControllerTest {
 
     @MockitoBean
     lateinit var smsSender: SmsSender
+
+    @MockitoBean
+    lateinit var providerCredit: SmsProviderCreditGuard
 
     @Test
     fun `POST test sends the SMS and returns 202`() {
@@ -35,6 +39,29 @@ class SmsControllerTest {
     fun `POST with an invalid number returns 400`() {
         mockMvc.postJson("""{"to":"12345","body":"hi"}""")
             .andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `GET credit reports our own gateway balance in messages`() {
+        val credit = ProviderCredit.Known(31521, "CZK")
+        given(providerCredit.inspect()).willReturn(credit)
+        given(providerCredit.messagesLeft(credit)).willReturn(262)
+
+        mockMvc.perform(get("/api/sms/credit"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.state").value("KNOWN"))
+            .andExpect(jsonPath("$.remainingMinor").value(31521))
+            .andExpect(jsonPath("$.currency").value("CZK"))
+            .andExpect(jsonPath("$.messagesLeft").value(262))
+    }
+
+    @Test
+    fun `GET credit says so when the provider has no balance to report`() {
+        given(providerCredit.inspect()).willReturn(null)
+
+        mockMvc.perform(get("/api/sms/credit"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.state").value("NOT_REPORTED"))
     }
 
     private fun MockMvc.postJson(body: String) =

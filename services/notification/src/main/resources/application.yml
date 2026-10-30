@@ -76,6 +76,19 @@ sms:
     client-secret: ${GOSMS_CLIENT_SECRET:}
     channel: ${GOSMS_CHANNEL:0}
     base-url: ${GOSMS_BASE_URL:https://app.gosms.eu}
+  # Guarding *our* prepaid balance at the gateway, which is a different thing from the hunter's
+  # credit above: this one is what keeps the product from going silent for everybody at once.
+  # Only providers that can report a balance are guarded (GoSMS reads it from GET /api/v1/);
+  # with the logging fake or Twilio there is nothing to read and the guard is inert.
+  provider-credit:
+    # What a message costs *us* (120 = 1.20 CZK on the GoSMS-test channel), against the 150 we
+    # charge the hunter. Below this much credit an alert is retried rather than charged-and-lost.
+    message-price-minor: ${SMS_PROVIDER_MESSAGE_PRICE_MINOR:120}
+    # Warn in the logs at or below 20 CZK -- about 16 messages of notice.
+    warn-minor: ${SMS_PROVIDER_CREDIT_WARN_MINOR:2000}
+    # How long a healthy balance is trusted, so the guard costs one call every few minutes rather
+    # than one per alert. A balance too low to send is never cached.
+    ttl: ${SMS_PROVIDER_CREDIT_TTL:5m}
   twilio:
     account-sid: ${TWILIO_ACCOUNT_SID:}
     auth-token: ${TWILIO_AUTH_TOKEN:}

@@ -1,6 +1,6 @@
 # WildAlert — Project Status
 
-_Last updated: 2026-10-29. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
+_Last updated: 2026-10-30. Companion to [`ROADMAP.md`](./ROADMAP.md): ROADMAP is the plan,
 this is where we actually are. Work proceeds one reviewable slice at a time._
 
 ## What it is
@@ -1375,6 +1375,80 @@ and is switched on by the next.
     never been committed. `docker compose --profile local up` cannot work from a fresh clone. Not
     fixed here (it is nothing to do with credit) but worth its own one-line slice.
 
+- **Slice 5 (2026-10-30, done; needs a Cloud Run revision): guarding *our* credit at the gateway,
+  which is the other half of the credit story.** Slices 1–4 made sure a hunter cannot spend more
+  than they bought. This one makes sure **WildAlert** cannot: GoSMS is prepaid, and when it empties
+  every alert fails — including the ones hunters have already paid for. That is the silent outage
+  slice 2b described (sixteen fake signups could drain a 200 CZK balance); the zero signup grant
+  removed the cheap way to cause it, this removes the consequence.
+  - **The two credits are deliberately different objects and protect different things.** The
+    hunter's balance lives in Postgres and is spent per event; ours lives at GoSMS and is read, not
+    written. Mixing them up would be easy and expensive, so the new types say which they mean:
+    `SmsProviderCredit` / `ProviderCredit` / `SmsProviderCreditGuard`, all in notification.
+  - **The balance read was verified against the live account before a line of parsing was written**,
+    because this project has now been burned twice by a guessed GoSMS shape (the missing `id` in
+    slice 12, the missing content type in credit slice 4). `GET /api/v1/` really answers:
+    `{"currentCredit":315.21,"invoicingType":"Prepaid","currency":"CZK","channels":[…]}`. So the
+    field is **`currentCredit`**, in **CZK major units** — STATUS.md's earlier note called it
+    "credit", which would not have parsed — and `invoicingType` is what says whether there is a
+    balance to run out of at all. A test carries that exact body.
+  - **The guard runs before the hunter is charged, not around the send.** The charge comes first in
+    `NotificationService` and there is no refund path, so discovering our own empty balance at send
+    time would take 150 haléře and deliver silence. Checked first, no money moves at all.
+  - **An empty gateway is retried, not acked — the opposite of a hunter's `INSUFFICIENT`.** That
+    refusal is final and slice 3/4 ack it to keep the dead-letter topic clean. This one we can fix
+    by topping up, so it throws: the push 5xxs, Pub/Sub retries with backoff, and what is still
+    unsent parks in the dead-letter topic, replayable. **A filling dead-letter topic is the correct
+    alarm for "the account needs money"** — the alert is kept, not dropped.
+  - **Two rules keep the guard from becoming a new way to lose alerts**, which is the real risk of
+    adding a precondition to the delivery path:
+    1. **An unreadable balance never blocks.** A broken or changed credit endpoint is our problem,
+       not the hunter's, and the send itself is the real test — GoSMS refuses what it cannot bill.
+       `ProviderCredit.Unknown` passes, loudly. Same reasoning as `Notice` being lenient while
+       `ChargeOutcome` is strict: not knowing what to *add* is survivable, not knowing whether we
+       may *send* is not. A credit in another currency is `Unknown` too, rather than compared
+       against CZK prices.
+    2. **A blocking balance is never cached.** A healthy one is trusted for 5 minutes, so the guard
+       costs one call per TTL instead of one per alert; bad news is re-read every time, so the first
+       alert after a top-up goes out at once instead of waiting out a stale "empty".
+  - **A low balance warns in the logs (≤ 20 CZK, ~16 messages) — and warns at most once per TTL**,
+    because the reads are cached. That falls out of the caching rather than needing its own
+    throttle. It is a log line, not an SMS to the operator: a *second* SMS provider to tell us the
+    first one is empty is a dependency this does not need.
+  - **`GET /api/sms/credit`** answers "will the next alert go out?" with `{state, remainingMinor,
+    currency, messagesLeft}` and no send. Safe to expose because notification is private on Cloud
+    Run (only the Pub/Sub push SA holds `roles/run.invoker`) — the same reason the actuator
+    endpoints that would leak config stay off.
+  - **The price of a message is config, not a constant, and it lives next to the guard**
+    (`sms.provider-credit.message-price-minor`, 120) rather than under `billing`, which is what we
+    charge the hunter (150). A new test asserts `billing.sms-cost-minor` is greater than it using
+    the *shipped* values, so "we lose money on every alert" is now a failing build rather than a
+    comment. A `0` price cannot divide by zero: it is coerced to 1 and logged, which guards nothing
+    — the direction every uncertainty here resolves in.
+  - **Verified live, twice, against the real GoSMS account** (the jar run locally with the real
+    credentials from Secret Manager):
+    - healthy: `GET /api/sms/credit` →
+      `{"state":"KNOWN","remainingMinor":31521,"currency":"CZK","messagesLeft":262}`, and the
+      startup log reads `Guarding SMS provider credit (a message costs us 120 haléře, warning at
+      2000, re-read every PT5M)`. The account holds **315.21 CZK ≈ 262 alerts**, so there is plenty
+      of runway — the guard is in place before it is needed, which is the only useful time.
+    - blocking: the same jar with `SMS_PROVIDER_MESSAGE_PRICE_MINOR=99999999` (cheaper than
+      emptying a real account) answered a real push **HTTP 500** with
+      `SmsProviderOutOfCreditException`, and **user-account was not running at all** — nothing
+      called it, which is the proof the guard precedes the charge. Each of curl's retries re-read
+      the balance, which is rule 2 visible in a log.
+  - **Tests:** notification 95, 0 failures (was 71) — 14 for the guard, 7 for the GoSMS read, 4
+    pinning the shipped defaults, 2 for the endpoint, and one in `NotificationServiceTest` that an
+    empty gateway charges nobody, claims nothing and leaves the event redeliverable.
+  - **Not deployed.** It is one `gcloud run deploy` on notification with no new variables (the
+    defaults are the intended configuration, as with `SIGNUP_GRANT_MINOR`'s zero) — and, per the
+    comma trap in slice 4, read the variables back off the template afterwards.
+  - **Known gap, deliberately left:** nothing *watches* the warning. It is a log line in Cloud
+    Logging, so it needs a log-based alert policy to reach a human — Phase 7's
+    "structured logging + basic metrics/alerts" item, where it belongs with everything else that
+    needs alerting. Until then the honest statement is that the product now **fails loudly and
+    keeps the alerts** instead of losing them quietly.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
@@ -1403,6 +1477,9 @@ and is switched on by the next.
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
+- **Nothing watches the gateway-credit warning yet.** The low-balance line is in Cloud Logging and
+  the dead-letter topic fills if the account empties, but neither reaches a human on its own — it
+  needs a log-based alert policy, with Phase 7's logging/metrics item.
 - **Inbound email webhook written but never run:** matching by recipient is done (slice 5) and
   the Email Worker now exists (`deploy/email-worker/`), but it cannot be deployed until
   email-ingestion has a Cloud Run URL. `message.to` (the SMTP envelope recipient) is what it

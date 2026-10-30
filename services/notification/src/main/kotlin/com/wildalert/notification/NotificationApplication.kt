@@ -1,6 +1,7 @@
 package com.wildalert.notification
 
 import com.wildalert.notification.sms.GoSmsProperties
+import com.wildalert.notification.sms.SmsProviderCreditProperties
 import com.wildalert.notification.sms.TwilioProperties
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
@@ -10,7 +11,11 @@ import org.springframework.boot.runApplication
 // No DataSource unless idempotency.store=postgres asks for one (PostgresIdempotencyConfig),
 // so the service still starts with no database.
 @SpringBootApplication(exclude = [DataSourceAutoConfiguration::class])
-@EnableConfigurationProperties(TwilioProperties::class, GoSmsProperties::class)
+@EnableConfigurationProperties(
+    TwilioProperties::class,
+    GoSmsProperties::class,
+    SmsProviderCreditProperties::class,
+)
 class NotificationApplication
 
 fun main(args: Array<String>) {

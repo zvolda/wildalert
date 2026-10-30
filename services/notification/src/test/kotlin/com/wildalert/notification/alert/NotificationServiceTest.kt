@@ -7,7 +7,11 @@ import com.wildalert.notification.hunter.HunterCharge
 import com.wildalert.notification.hunter.HunterClient
 import com.wildalert.notification.hunter.Notice
 import com.wildalert.notification.idempotency.InMemoryProcessedEvents
+import com.wildalert.notification.sms.ProviderCredit
 import com.wildalert.notification.sms.SmsMessage
+import com.wildalert.notification.sms.SmsProviderCredit
+import com.wildalert.notification.sms.SmsProviderCreditGuard
+import com.wildalert.notification.sms.SmsProviderOutOfCreditException
 import com.wildalert.notification.sms.SmsResult
 import com.wildalert.notification.sms.SmsSender
 import org.assertj.core.api.Assertions.assertThat
@@ -39,7 +43,11 @@ class NotificationServiceTest {
     private val hunterClient: HunterClient = mock(HunterClient::class.java)
     private val smsSender = RecordingSmsSender()
     private val processedEvents = InMemoryProcessedEvents()
-    private val service = NotificationService(hunterClient, smsSender, processedEvents, SMS_COST)
+    /** Our gateway balance is not what these tests are about, so it is left unguarded. */
+    private fun unguarded() = SmsProviderCreditGuard(provider = null)
+
+    private val service =
+        NotificationService(hunterClient, smsSender, processedEvents, SMS_COST, unguarded())
 
     private val hunterId = UUID.randomUUID()
     private val recipient = "7f3k9qabcdef@wildalert.local"
@@ -69,6 +77,28 @@ class NotificationServiceTest {
         // eventId is fresh on every republish; sourceEventId is what survives it. Charging on the
         // wrong one would bill one photo again and again.
         assertThat(request.value.sourceEventId).isEqualTo(event.sourceEventId.toString())
+    }
+
+    @Test
+    fun `an empty gateway stops the alert before the hunter is charged`() {
+        // The point of the whole guard: charging first and discovering our own balance is empty
+        // afterwards would bill 150 haléře for silence, and there is no refund path. Nothing is
+        // charged, nothing is claimed, and the throw makes Pub/Sub keep the alert for a retry.
+        val emptyGateway = object : SmsProviderCredit {
+            override fun remaining() = ProviderCredit.Known(0, "CZK")
+        }
+        val guarded = NotificationService(
+            hunterClient, smsSender, processedEvents, SMS_COST, SmsProviderCreditGuard(emptyGateway),
+        )
+        val event = event()
+
+        assertThatThrownBy { guarded.notify(event) }
+            .isInstanceOf(SmsProviderOutOfCreditException::class.java)
+
+        verifyNoInteractions(hunterClient)
+        assertThat(smsSender.sent).isEmpty()
+        // Unclaimed, so the redelivery after a top-up can still send this alert.
+        assertThat(processedEvents.claim(event.sourceEventId)).isTrue()
     }
 
     @Test
@@ -218,7 +248,8 @@ class NotificationServiceTest {
                 return SmsResult("after-retry")
             }
         }
-        val retryingService = NotificationService(hunterClient, failing, processedEvents, SMS_COST)
+        val retryingService =
+            NotificationService(hunterClient, failing, processedEvents, SMS_COST, unguarded())
         val event = event()
 
         assertThatThrownBy { retryingService.notify(event) }.isInstanceOf(IllegalStateException::class.java)
