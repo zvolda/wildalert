@@ -1,6 +1,7 @@
 package com.wildalert.useraccount.hunter
 
 import com.wildalert.useraccount.credit.CreditService
+import com.wildalert.useraccount.password.ChangePasswordRequest
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -108,6 +109,30 @@ class HunterService(
      * lowercase, trimmed form makes matching reliable and keeps the unique constraint meaningful.
      */
     private fun normalizeEmail(email: String): String = email.trim().lowercase()
+
+    /**
+     * Change a signed-in hunter's password, after re-checking the current one.
+     *
+     * **The current password is required even though the caller already holds a valid session**,
+     * and that is not belt-and-braces. A session may be an unattended browser, and this endpoint
+     * hands over permanent control of the account: without the check, anyone who sits down at an
+     * open laptop can lock the owner out. It is also the reason a wrong answer here is the same
+     * `InvalidCredentialsException` login uses -- the caller already knows the account exists, so
+     * all that is left to avoid saying is which value was wrong.
+     *
+     * Ending the other sessions is the caller's job, not this method's: sessions belong to
+     * SessionService, and doing it here would put the session table behind two owners.
+     */
+    @Transactional
+    fun changePassword(id: UUID, request: ChangePasswordRequest): Hunter {
+        val hunter = getById(id)
+        val storedHash = hunter.passwordHash ?: throw InvalidCredentialsException()
+        if (!passwordEncoder.matches(request.currentPassword, storedHash)) {
+            throw InvalidCredentialsException()
+        }
+        hunter.setPassword(passwordEncoder.encode(request.newPassword))
+        return hunter
+    }
 
     @Transactional
     fun update(id: UUID, request: UpdateHunterRequest): Hunter {

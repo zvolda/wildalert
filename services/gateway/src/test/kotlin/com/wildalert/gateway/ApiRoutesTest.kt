@@ -143,6 +143,12 @@ class ApiRoutesTest {
             Call(HttpMethod.POST, "/api/sessions"),
             Call(HttpMethod.DELETE, "/api/sessions"),
             Call(HttpMethod.GET, "/api/me"),
+            // The password flows. The two reset paths are the only state-changing endpoints here
+            // an anonymous caller is meant to reach, so a route silently missing would look
+            // exactly like a hunter being unable to get back into their account.
+            Call(HttpMethod.POST, "/api/me/password"),
+            Call(HttpMethod.POST, "/api/password-resets"),
+            Call(HttpMethod.POST, "/api/password-resets/confirm"),
         )
 
         for (call in allowed) {

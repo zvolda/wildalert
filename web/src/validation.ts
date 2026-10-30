@@ -1,4 +1,10 @@
-import type { FieldErrors, LoginRequest, RegisterHunterRequest } from './types'
+import type {
+  ChangePasswordRequest,
+  FieldErrors,
+  LoginRequest,
+  RegisterHunterRequest,
+  RequestPasswordResetRequest,
+} from './types'
 
 /**
  * Copied deliberately from PASSWORD_MIN_LENGTH / PASSWORD_MAX_LENGTH in HunterDtos.kt. The upper
@@ -108,6 +114,52 @@ export function validateLogin(request: LoginRequest): FieldErrors {
   const email = validateEmail(request.email)
   if (email) errors.email = email
   if (request.password === '') errors.password = 'Enter your password'
+  return errors
+}
+
+/**
+ * The change-password form's rules.
+ *
+ * The *new* password gets the full policy, because it is being chosen. The current one gets a
+ * presence check only -- the same reasoning as the login form: restating the rule on a value
+ * being verified announces it, and would reject a password that predates whatever the rule
+ * becomes.
+ *
+ * It also refuses a new password identical to the current one. The server accepts that happily
+ * (it is not wrong, just pointless), but a hunter who has just been told every other browser was
+ * signed out deserves to know they changed nothing.
+ */
+export function validateChangePassword(request: ChangePasswordRequest): FieldErrors {
+  const errors: FieldErrors = {}
+  if (request.currentPassword === '') errors.currentPassword = 'Enter your current password'
+  const newPassword = validateNewPassword(request.newPassword)
+  if (newPassword) {
+    errors.newPassword = newPassword
+  } else if (request.newPassword === request.currentPassword) {
+    errors.newPassword = 'Choose a password different from your current one'
+  }
+  return errors
+}
+
+/** The forgotten-password form: an email address, and nothing else to check. */
+export function validatePasswordResetRequest(request: RequestPasswordResetRequest): FieldErrors {
+  const errors: FieldErrors = {}
+  const email = validateEmail(request.email)
+  if (email) errors.email = email
+  return errors
+}
+
+/**
+ * The reset screen: only the new password is the hunter's to get wrong.
+ *
+ * The token came from the link, so a client-side complaint about it would be blaming them for
+ * something they never typed. An empty or malformed token is left to the server's one generic
+ * 400, which the screen shows as a banner telling them to request a fresh link.
+ */
+export function validateConfirmPasswordReset(newPassword: string): FieldErrors {
+  const errors: FieldErrors = {}
+  const problem = validateNewPassword(newPassword)
+  if (problem) errors.newPassword = problem
   return errors
 }
 

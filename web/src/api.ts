@@ -1,5 +1,12 @@
 import { parseProblem, type ParsedProblem } from './problemDetail'
-import type { HunterResponse, LoginRequest, RegisterHunterRequest } from './types'
+import type {
+  ChangePasswordRequest,
+  ConfirmPasswordResetRequest,
+  HunterResponse,
+  LoginRequest,
+  RegisterHunterRequest,
+  RequestPasswordResetRequest,
+} from './types'
 
 /** A failure we can explain to the user, with anything field-specific already attributed. */
 export class ApiError extends Error {
@@ -48,6 +55,41 @@ export async function fetchMe(): Promise<HunterResponse | null> {
     if (error instanceof ApiError && error.problem.status === 401) return null
     throw error
   }
+}
+
+/**
+ * Change your own password. Returns the hunter, and the response carries a **fresh** session
+ * cookie -- user-account ends every session on a password change, including this browser's, and
+ * issues a new one for the caller. So nothing here has to re-authenticate afterwards.
+ */
+export async function changePassword(request: ChangePasswordRequest): Promise<HunterResponse> {
+  return send('/api/me/password', { method: 'POST', json: request })
+}
+
+/**
+ * Ask for a reset link.
+ *
+ * **Resolves the same way for an address with no account**, because the server answers 202
+ * either way -- it will not say which addresses are registered. The caller must therefore show
+ * one confirmation regardless, and must not be tempted to report "no such account".
+ */
+export async function requestPasswordReset(request: RequestPasswordResetRequest): Promise<void> {
+  await send<void>('/api/password-resets', { method: 'POST', json: request, expectBody: false })
+}
+
+/**
+ * Spend a reset link. Resolves on success and throws an ApiError with one generic 400 for every
+ * way a link can be dead (unknown, expired, already used).
+ *
+ * Deliberately does *not* sign the hunter in: there is no cookie on this response, and the screen
+ * sends them to the sign-in form so the new password gets used once straight away.
+ */
+export async function confirmPasswordReset(request: ConfirmPasswordResetRequest): Promise<void> {
+  await send<void>('/api/password-resets/confirm', {
+    method: 'POST',
+    json: request,
+    expectBody: false,
+  })
 }
 
 interface SendOptions {

@@ -1,6 +1,7 @@
 package com.wildalert.useraccount.hunter
 
 import com.wildalert.useraccount.credit.CreditService
+import com.wildalert.useraccount.password.ChangePasswordRequest
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -259,6 +260,46 @@ class HunterServiceTest {
         assertThat(messages.distinct())
             .describedAs("all four refusals must read identically")
             .hasSize(1)
+    }
+
+    @Test
+    fun `changePassword replaces the hash when the current password is right`() {
+        val id = UUID.randomUUID()
+        val hunter = hunterWithPassword("correct-horse", active = true)
+        given(repository.findById(id)).willReturn(Optional.of(hunter))
+
+        service.changePassword(id, ChangePasswordRequest("correct-horse", "battery-staple-9"))
+
+        assertThat(hunter.passwordHash).isEqualTo("encoded:battery-staple-9")
+    }
+
+    @Test
+    fun `changePassword refuses a wrong current password`() {
+        val id = UUID.randomUUID()
+        val hunter = hunterWithPassword("correct-horse", active = true)
+        given(repository.findById(id)).willReturn(Optional.of(hunter))
+
+        assertThrows<InvalidCredentialsException> {
+            service.changePassword(id, ChangePasswordRequest("not-the-password", "battery-staple-9"))
+        }
+
+        // The old password still works. Worth asserting rather than assuming: an implementation
+        // that wrote the hash before checking would pass the exception test and still be wrong.
+        assertThat(hunter.passwordHash).isEqualTo("encoded:correct-horse")
+    }
+
+    @Test
+    fun `changePassword refuses a hunter who has no password yet`() {
+        // Registered before logins existed. There is no current password to prove, so this
+        // endpoint cannot be the way such an account gains one -- that is the reset flow's job,
+        // and it refuses them too, by email rather than by guesswork.
+        val id = UUID.randomUUID()
+        val hunter = Hunter("hunter@example.com", "+420123456789")
+        given(repository.findById(id)).willReturn(Optional.of(hunter))
+
+        assertThrows<InvalidCredentialsException> {
+            service.changePassword(id, ChangePasswordRequest("anything", "battery-staple-9"))
+        }
     }
 
     private fun hunterWithPassword(

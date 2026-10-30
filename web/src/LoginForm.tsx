@@ -7,9 +7,10 @@ import { type FieldErrors, type HunterResponse } from './types'
 interface Props {
   onSignedIn: (hunter: HunterResponse) => void
   onSwitchToRegister: () => void
+  onForgotPassword: () => void
 }
 
-export default function LoginForm({ onSignedIn, onSwitchToRegister }: Props) {
+export default function LoginForm({ onSignedIn, onSwitchToRegister, onForgotPassword }: Props) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
@@ -92,7 +93,7 @@ export default function LoginForm({ onSignedIn, onSwitchToRegister }: Props) {
         <Field
           id="login-password"
           label="Password"
-          hint="There is no password reset yet — get in touch if you are stuck."
+          hint="Forgotten it? There's a link below."
           error={fieldErrors.password}
         >
           {(describedBy, invalid) => (
@@ -116,6 +117,16 @@ export default function LoginForm({ onSignedIn, onSwitchToRegister }: Props) {
       </div>
 
       <p className="mt-5 text-sm text-stone-600 dark:text-stone-400">
+        <button
+          type="button"
+          onClick={onForgotPassword}
+          className="font-medium text-moss-700 underline underline-offset-2 hover:text-moss-800 dark:text-moss-400"
+        >
+          Forgot your password?
+        </button>
+      </p>
+
+      <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">
         No account yet?{' '}
         <button
           type="button"

@@ -19,7 +19,21 @@ export interface ParsedProblem {
   status?: number
 }
 
-const FORM_FIELDS: readonly FormField[] = ['email', 'phone', 'password']
+/**
+ * The runtime allowlist. A name missing from here degrades into banner text rather than landing
+ * on its input -- which is a deliberate fallback, but a silent one, so adding a field to
+ * `FormField` without adding it here is the easy half of the job done.
+ *
+ * `token` is **deliberately absent**: a validation message about the reset token belongs in the
+ * banner, because there is no token input on the screen for it to attach to.
+ */
+const FORM_FIELDS: readonly FormField[] = [
+  'email',
+  'phone',
+  'password',
+  'currentPassword',
+  'newPassword',
+]
 
 function isFormField(name: string): name is FormField {
   return (FORM_FIELDS as readonly string[]).includes(name)

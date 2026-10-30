@@ -66,6 +66,14 @@ class SecurityConfig {
             .authorizeHttpRequests {
                 it.requestMatchers(HttpMethod.GET, "/api/me").authenticated()
                 it.requestMatchers(HttpMethod.DELETE, "/api/sessions").authenticated()
+                // Changing your own password needs a session; the *reset* endpoints must not,
+                // since being locked out is their entire premise. They are listed explicitly
+                // rather than left to the permitAll default so that this block reads as the
+                // complete answer to "what can an anonymous caller reach?" -- the two flows look
+                // alike and are exposed oppositely, which is worth one line each to make obvious.
+                it.requestMatchers(HttpMethod.POST, "/api/me/password").authenticated()
+                it.requestMatchers(HttpMethod.POST, "/api/password-resets").permitAll()
+                it.requestMatchers(HttpMethod.POST, "/api/password-resets/confirm").permitAll()
                 // Everything else, deliberately. See the class comment.
                 it.anyRequest().permitAll()
             }
