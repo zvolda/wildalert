@@ -1470,11 +1470,14 @@ and is switched on by the next.
       so stripping a role and repointing the things that use it belong in one sitting. Checking
       `gcloud builds triggers list --format="table(name,serviceAccount)"` before the strip would
       have shown all four triggers naming the account about to be emptied.
-    - **State as of this entry: `notification-main` and `user-account-main` are repointed;
-      `email-ingestion-main` and `recognition-main` are not** — one identical command each, and
-      their `26bf723` images already exist, so they need no rebuild. `user-account`'s `26bf723`
-      image was never pushed; harmless, since that service's code is unchanged in this slice and
-      prod correctly runs the older image.
+    - **Finished the same morning: all four triggers run as `wildalert-cloudbuild@`** and the
+      compute default is unused, which is the end state Phase 7 wanted rather than a patch.
+      The `user-account` image the failed build never pushed was then rebuilt through the repointed
+      trigger, which tags **the commit it builds** — so the image is `4de967a` (main's head after
+      the docs merge), not the `26bf723` that went missing. Nothing was deployed from it: that
+      service's code is unchanged in this slice and prod correctly kept running its older revision.
+      Worth remembering that `triggers run --branch=main` means "build main as it is now", so the
+      tag follows the branch rather than the build you are replacing.
   - **Not verified in prod beyond the startup log.** `GET /api/sms/credit` cannot be called from
     here: the service is private, a user credential cannot mint an audience-scoped ID token
     (`--audiences` is service-account only, and Cloud Run answers 401 at the edge), and
