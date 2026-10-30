@@ -146,16 +146,27 @@ and tests run with zero infrastructure) + one real implementation chosen by conf
 (`EMAIL_PROVIDER`). Mirrors `SmsSender`/`ImageStore`/`EventPublisher` exactly. Money's "no fake, no
 off switch" exception does **not** apply — nothing here moves credit.
 
-The link in the mail is `https://wildalert.app/reset?token=…`, built from a configured base URL
-(`PUBLIC_BASE_URL`), never from the inbound `Host` header — a header-derived link is a
-password-reset-poisoning vector.
+The link in the mail is built from a configured base URL (`PUBLIC_BASE_URL`), never from the
+inbound `Host` header — a header-derived link is a password-reset-poisoning vector.
+
+**Its shape changed during implementation, and the reason is worth keeping: `https://wildalert.app/?reset=…`,
+a query parameter on the root, not a `/reset` path.** The gateway serves the built app from
+`static-locations` with **no SPA fallback**, so every unmatched path there is a 404 — a
+path-shaped link would have gone out to hunters already broken. It is the same constraint that
+keeps the React app routerless (see `App.tsx`), and a query parameter satisfies both.
 
 ### Slice C — the two screens
 
 `web/`: a "Forgot password?" link on the sign-in form → request screen (always shows the same
-"check your inbox" confirmation); a `/reset?token=…` screen → new-password form → on success, send
-them to sign-in. Plus a change-password form on the dashboard for slice A. The gateway's route
+"check your inbox" confirmation); arriving with `?reset=…` → new-password form → on success, send
+them to sign-in. Plus a change-password panel on the dashboard for slice A. The gateway's route
 allowlist needs the new paths — it is deliberately tiny, so each one is an explicit line.
+
+The reset screen is checked **before** the session check in `App.tsx`: someone following a reset
+link is there to reset, and an old cookie — quite possibly the intruder's, which may be why they
+are resetting — must not land them on a dashboard instead. The spent token is then stripped from
+the address bar with `replaceState`, so a refresh does not retry a dead link and the history keeps
+no credential-shaped URL.
 
 ## Left to do outside the code
 

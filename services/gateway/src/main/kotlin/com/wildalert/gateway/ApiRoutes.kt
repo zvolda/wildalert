@@ -23,6 +23,11 @@ import org.springframework.web.servlet.function.ServerResponse
  * - `POST /api/sessions` — log in
  * - `DELETE /api/sessions` — log out
  * - `GET /api/me` — the signed-in hunter's own record
+ * - `POST /api/me/password` — change your own password (user-account requires the session)
+ * - `POST /api/password-resets` and `POST /api/password-resets/confirm` — the forgotten-password
+ *   flow. **These two are the only endpoints here that an anonymous caller is *meant* to reach
+ *   and that change state**, which is what makes them the ones wanting Turnstile in front; the
+ *   reset request is also the first thing the edge proxies that can cause an email to be sent.
  *
  * Deliberately **still not** proxied, and each for the original reason:
  * - `GET /api/hunters/{id}`
@@ -69,6 +74,9 @@ class ApiRoutes(
             .POST("/api/sessions", http())
             .DELETE("/api/sessions", http())
             .GET("/api/me", http())
+            .POST("/api/me/password", http())
+            .POST("/api/password-resets", http())
+            .POST("/api/password-resets/confirm", http())
             .before(uri(userAccountBaseUrl))
             .before(::withCredential)
             .build()

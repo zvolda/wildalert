@@ -1604,7 +1604,9 @@ registration, a login, a logout, and one authenticated page showing the balance 
   dropped it would look exactly like a broken login. `ApiRoutesTest`'s stub response was also
   stale — still carrying `"plan":"FREE"`, a field dropped in V3, and no `creditBalanceMinor` —
   and is now a faithful copy of the real contract.
-- **Still open, and all of it deliberate.** **No password reset** (needs outbound email). **No
+- **Still open, and all of it deliberate.** **No password reset** (needs outbound email) --
+  *superseded 2026-10-30: built, see the password section below; what it waits on is a sending
+  provider, not the architecture.* **No
   brute-force protection** — a public login form is a credential-stuffing target and this slice
   adds nothing against it; it belongs with Turnstile and arguably should not reach production
   ahead of it. **CSRF is disabled**, justified by the `SameSite=Lax` cookie and the fact that the
@@ -1684,6 +1686,79 @@ SMS or a DeepFaune run, and there is no delete endpoint — user-account is priv
 is now proven in production end to end; the pixels are not. And the login form is publicly
 reachable at the `run.app` URL with **no brute-force protection**, which is the argument for doing
 Turnstile next rather than after the DNS switch.
+
+## Done — password change and reset (2026-10-30, branch `worktree-password-reset`)
+
+Designed first in [`docs/password-reset.md`](./docs/password-reset.md) (written and committed
+before any code, so the reasoning survives independently), then built in one branch.
+
+**The gap was wider than "no forgot-password".** Nothing in the product could change a password at
+all: `UpdateHunterRequest` carried only `phone` and `active`, and `setPassword` was called from
+exactly one place, `register`. A hunter who *knew* their password could not rotate it, and there
+was no admin path, so the only route was SQL against production — with two traps that are now
+written down because operators will still do it occasionally: the hash needs its `{bcrypt}` prefix
+(the encoder is the delegating one), and `password_hash = NULL` **locks** an account rather than
+clearing it.
+
+**Email, not SMS, and the premise in the old note was wrong twice.** STATUS said reset was
+"blocked on outbound email, which this project has never had". But the apex MX governs *inbound*
+mail only: SPF today carries just Cloudflare's forwarding include (`v=spf1
+include:_spf.mx.cloudflare.net ~all`) and there is **no DMARC record at all**, so sending needs a
+provider plus DNS records, not a re-architecture. And reusing GoSMS — the tempting option, since
+the phone is already on file — was rejected: **a reset endpoint has to be unauthenticated**, so an
+SMS flow lets anyone on the internet spend prepaid credit keyed on someone else's address. That is
+the silent outage the credit guard exists to prevent, reached from a direction the guard cannot
+cover, because it refuses an alert it cannot pay for *after* the credit is already gone. SMS's
+right job here is **phone verification**, where the phone is the thing being proven and the spend
+sits behind registration.
+
+**What shipped:**
+- `POST /api/me/password` (session-authenticated) — re-verifies the current password even though a
+  valid session is present, because a session may be an unattended browser and this endpoint hands
+  over permanent control. Closes every session, then issues a fresh cookie for the caller, so the
+  hunter who made the change stays signed in and every other browser does not.
+- `POST /api/password-resets` — **always 202**, for a registered address or not. Anything else
+  turns a public form into a way to test which addresses have accounts. Silent on four paths:
+  unknown address, deactivated hunter, a hunter with no password (pre-login rows), and throttled.
+- `POST /api/password-resets/confirm` — one generic **400** for unknown, expired, spent, or
+  deactivated. Issues no cookie on purpose: reading a mailbox proves mailbox access, not knowledge
+  of the password, so the hunter is sent to sign in and uses the new password once immediately.
+- Flyway **V6** `password_reset_token`, shaped like `hunter_session`: the SHA-256 hex is the
+  primary key, 1h expiry, single use enforced on `used_at` (the spent row is kept so a replay is
+  *recognisably* spent), a ~5 minute per-hunter throttle, and a sweep of spent/expired rows that
+  rides on the rare request path rather than a `@Scheduled` task Cloud Run would not reliably run.
+- `EmailSender` + `LoggingEmailSender` — the project's **first outbound email of any kind**,
+  following the house interface/fake-default rule. It logs recipient and subject at INFO but
+  **withholds the body**, because the body holds the link and the link *is* the credential: on
+  Cloud Run every line is retained in Cloud Logging, which would make the log a standing list of
+  working resets. The link goes out at DEBUG for local dev only.
+- Gateway: three routes added to the deliberately tiny allowlist. The two reset paths are the only
+  state-changing endpoints there an anonymous caller is *meant* to reach.
+- `web/`: a "Forgot password?" link, a request screen whose confirmation reads "if … has an
+  account" (so the two cases cannot be told apart by comparing copy), a reset screen, and a
+  collapsed change-password panel on the dashboard. The stale "There is no password reset yet"
+  hint on the login form is gone.
+
+**The link is `/?reset=…`, a query parameter, not a `/reset` path** — caught while wiring the UI.
+The gateway serves the app from `static-locations` with no SPA fallback, so a path-shaped link
+would have arrived in inboxes already 404ing. Same constraint that keeps the app routerless.
+
+**Verified live, not only in unit tests** (18 checks against the real jar on real Postgres, since
+this project has been bitten by a 415 that every mocked test passed): register → sign in → request
+a reset for a non-existent address (202) → for the real one (202) → an immediate second request
+produced **one** link, not two (throttle) → too-short password 400 → bogus token 400 → confirm 204
+→ replay 400 → the pre-reset session 401 → old password 401 → new password 200 → change-password
+with a wrong current 401, with no session 401, properly 200 with a fresh `Set-Cookie` → reissued
+cookie 200. In the database: `token_hash` 64 chars, `used_at` set, TTL 59:59, and the stored
+password carries `{bcrypt}`. Test rows deleted afterwards.
+
+**Still to do before a hunter can actually use it:** pick a sending provider (Resend/Postmark/SES,
+or Cloudflare Email Sending — no new vendor, but it sends from a Worker binding), add its SPF
+include, DKIM and a DMARC record, put the API key in Secret Manager with a **per-secret** binding
+(not the project-level `secretAccessor` user-account still holds), and set `EMAIL_PROVIDER` and
+`PUBLIC_BASE_URL=https://wildalert.app` with `--update-env-vars`. Until then a reset mail is
+logged, not sent. **Turnstile belongs in front of this form** as much as registration and login —
+the throttle is a courtesy to a hunter's inbox, not an abuse control.
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
@@ -1696,7 +1771,7 @@ Turnstile next rather than after the DNS switch.
   **The gateway is deployed** (2026-10-29, `gateway-00001-p5f`) and serves the form on its
   `run.app` URL; `deploy/site-worker/` puts it on `wildalert.app`, awaiting two DNS records and a
   `wrangler deploy`. Still to do after that: phone verification, the detection list on the
-  dashboard, presigned photo URLs, a password reset (needs outbound email) and brute-force
+  dashboard, presigned photo URLs, and brute-force
   protection on the login form.
 - **9 — Scale / auth / billing.** Hunter authentication is **partly done** as of slice 3 above: a
   hunter can sign in and read their own record. What remains under this heading is the password

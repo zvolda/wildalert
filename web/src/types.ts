@@ -22,6 +22,25 @@ export interface LoginRequest {
   password: string
 }
 
+/** Body of POST /api/me/password — changing your own password while signed in. */
+export interface ChangePasswordRequest {
+  currentPassword: string
+  /** Same 10-72 rule as registration; see PASSWORD_MAX_LENGTH in HunterDtos.kt. */
+  newPassword: string
+}
+
+/** Body of POST /api/password-resets — asking for a link. Always answered 202. */
+export interface RequestPasswordResetRequest {
+  email: string
+}
+
+/** Body of POST /api/password-resets/confirm — spending the link from the email. */
+export interface ConfirmPasswordResetRequest {
+  /** The opaque token out of the `?token=` query parameter. Never shown to the hunter. */
+  token: string
+  newPassword: string
+}
+
 /** Response from POST /api/hunters (201), POST /api/sessions (200) and GET /api/me (200). */
 export interface HunterResponse {
   id: string
@@ -64,6 +83,6 @@ export interface ProblemDetail {
  * Adding one here is only half the job: `FORM_FIELDS` in problemDetail.ts is the runtime
  * allowlist, and a name missing from it degrades into banner text instead of landing on the field.
  */
-export type FormField = 'email' | 'phone' | 'password'
+export type FormField = 'email' | 'phone' | 'password' | 'currentPassword' | 'newPassword'
 
 export type FieldErrors = Partial<Record<FormField, string>>

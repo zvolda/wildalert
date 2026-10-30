@@ -5,6 +5,7 @@ import com.wildalert.useraccount.hunter.HunterNotFoundByEmailException
 import com.wildalert.useraccount.hunter.HunterNotFoundByInboundAddressException
 import com.wildalert.useraccount.hunter.HunterNotFoundException
 import com.wildalert.useraccount.hunter.InvalidCredentialsException
+import com.wildalert.useraccount.password.InvalidResetTokenException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -41,6 +42,17 @@ class GlobalExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException::class)
     fun handleInvalidCredentials(ex: InvalidCredentialsException): ProblemDetail =
         ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.message ?: "Unauthorized")
+
+    /**
+     * A dead reset link → 400, with the exception's own message, which is safe to show: it tells
+     * the hunter to ask for a new link and nothing about why this one failed.
+     *
+     * 400 rather than 404 deliberately. A 404 would distinguish "no such token" from "expired or
+     * spent", which is the distinction the single exception exists to hide.
+     */
+    @ExceptionHandler(InvalidResetTokenException::class)
+    fun handleInvalidResetToken(ex: InvalidResetTokenException): ProblemDetail =
+        ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.message ?: "Bad request")
 
     /** Bean-validation failures (@Valid) → 400 with a field→message map. */
     @ExceptionHandler(MethodArgumentNotValidException::class)

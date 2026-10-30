@@ -58,6 +58,16 @@ class SessionService(
         sessions.deleteById(hash(rawToken))
     }
 
+    /**
+     * End every session a hunter has, and say how many there were.
+     *
+     * This is what a password change or reset calls. A new password that left the old cookies
+     * working would be security theatre -- the likeliest reason to change one is that somebody
+     * else may be holding a session. The `hunter_id` index exists for exactly this.
+     */
+    @Transactional
+    fun closeAll(hunterId: UUID): Int = sessions.deleteByHunterId(hunterId)
+
     /** Delete every expired row. Delegates, so there is one sweep and one set of guarantees. */
     fun closeExpired(): Int = sweeper.sweep()
 

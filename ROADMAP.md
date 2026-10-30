@@ -353,8 +353,11 @@ then the async flow, then deploy, then scale.
         password on registration, `POST`/`DELETE /api/sessions`, `GET /api/me`, and a dashboard
         showing credit and the inbound address. Sessions are rows in `hunter_session` keyed on a
         SHA-256 of the token, issued and validated by user-account; the gateway only forwards the
-        cookie. **No password reset** — it needs outbound email, which this project has never had
-        (Cloudflare Email Routing is inbound-only), so it waits. Phone verification still to do.*
+        cookie. **Password reset and change built the same day** -- see
+        [`docs/password-reset.md`](./docs/password-reset.md); it waits on a sending provider plus
+        SPF/DKIM/DMARC, not on the architecture, since the apex MX governs inbound mail only.
+        Phone verification still to do, and it is the other half of the channel split: SMS proves
+        a phone, email proves the login identity.*
   - [~] **The site on `wildalert.app`** — `deploy/site-worker/` written **and deployed**
         2026-10-29 (both routes attached); what remains is the two proxied `AAAA → 100::` records
         that switch it on, plus the SSL toggles — dashboard-only, since `wrangler` has no DNS
@@ -392,12 +395,15 @@ then the async flow, then deploy, then scale.
 - **Deliverable:** a monetizable, scalable product.
 - **Tasks:**
   - [~] Authentication/authorization for users — *hunter login landed early, in Phase 8 slice 3
-        (2026-10-30), because the dashboard needed it. Still open here: a password reset flow
-        (designed in [`docs/password-reset.md`](./docs/password-reset.md) — **not** blocked on outbound
-        email after all: sending needs a provider and DNS records, not a re-architecture, and email
-        is the chosen channel over SMS), brute-force protection on the public login form (belongs with
-        Turnstile, and arguably should not reach production before it), and authorizing
-        detection-history's read API before it is ever exposed.*
+        (2026-10-30), because the dashboard needed it, and **password change + reset followed the
+        same day** (designed first in [`docs/password-reset.md`](./docs/password-reset.md); it was
+        never blocked on outbound email as the old note claimed — the apex MX governs inbound mail
+        only, so sending needs a provider and DNS records, and email beats SMS here because an
+        unauthenticated reset endpoint must not be able to spend prepaid GoSMS credit). Still open
+        here: a **sending provider** before a hunter can actually receive the link, brute-force
+        protection on the public login *and* reset forms (belongs with Turnstile, and arguably
+        should not reach production before it), and authorizing detection-history's read API
+        before it is ever exposed.*
   - [ ] Billing (Stripe) tied to SMS usage
   - [ ] GPU inference option for burst volume
   - [ ] Monitoring/observability, load testing to "thousands of users"

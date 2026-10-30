@@ -93,6 +93,39 @@ session:
     # must give nothing away, while forgetting this must not break the developer's login.
     secure: ${SESSION_COOKIE_SECURE:false}
 
+password-reset:
+  # How long a reset link works. Short by design, unlike a session's 30 days: a mail sits in an
+  # inbox indefinitely, so a long-lived link is a standing key to the account.
+  ttl: ${PASSWORD_RESET_TTL:1h}
+
+  # How long before a second link is sent to the same hunter. This protects a *real* hunter's
+  # inbox from someone entering their address repeatedly -- it is a courtesy throttle, not the
+  # abuse control. The abuse control is Turnstile, which does not exist yet and which this public
+  # form wants as much as registration and login do.
+  throttle: ${PASSWORD_RESET_THROTTLE:5m}
+
+  # Where the link in the mail points, and the one setting here with a security reason behind it:
+  # the link must never be built from the request's Host header. A header-derived link is the
+  # classic reset-poisoning vector -- trigger a reset for someone else's address with your own
+  # Host, and their mail arrives pointing at your site.
+  #
+  # Defaults to the Vite dev server, because that is where the reset screen lives locally. In the
+  # cloud: PUBLIC_BASE_URL=https://wildalert.app (the gateway serves the app at the apex).
+  public-base-url: ${PUBLIC_BASE_URL:http://localhost:5173}
+
+  # The From address. Must be on a domain the sending provider has been verified for, so changing
+  # this is a DNS job as much as a config one -- see docs/password-reset.md.
+  from-address: ${PASSWORD_RESET_FROM:no-reply@wildalert.app}
+
+email:
+  # Which EmailSender is active. `logging` is the fake and the default, exactly as sms.provider
+  # and events.provider are: the service runs and the tests pass with no provider account and no
+  # DNS. **No real provider is wired up yet** -- picking one (Resend/Postmark/SES, or Cloudflare
+  # Email Sending) plus its SPF/DKIM/DMARC records is the remaining work in
+  # docs/password-reset.md. Until then a reset mail is logged, not sent, and a hunter who needs
+  # one has to be helped by hand.
+  provider: ${EMAIL_PROVIDER:logging}
+
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the
   # apex of the Cloudflare Email Routing zone, e.g. wildalert.app -- not a subdomain, because

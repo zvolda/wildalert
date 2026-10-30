@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, logout } from './api'
+import ChangePasswordPanel from './ChangePasswordPanel'
 import { alertsLabel, alertsRemaining, formatCredit } from './credit'
 import { cardClass } from './Field'
 import InboundAddressPanel from './InboundAddressPanel'
@@ -10,6 +11,8 @@ interface Props {
   /** True when this hunter has only just registered, which changes the copy and the focus. */
   justRegistered: boolean
   onSignedOut: () => void
+  /** Called with the refreshed hunter after a password change, so this view stays in step. */
+  onHunterChanged: (hunter: HunterResponse) => void
 }
 
 /**
@@ -19,7 +22,12 @@ interface Props {
  * registering still leads with it -- but a hunter who signs in later is almost always answering
  * "have I still got credit?", and the address is a reminder rather than news.
  */
-export default function Dashboard({ hunter, justRegistered, onSignedOut }: Props) {
+export default function Dashboard({
+  hunter,
+  justRegistered,
+  onSignedOut,
+  onHunterChanged,
+}: Props) {
   return (
     <div className="grid gap-5">
       {justRegistered ? (
@@ -37,6 +45,9 @@ export default function Dashboard({ hunter, justRegistered, onSignedOut }: Props
           />
         </>
       )}
+      {/* Last of the three panels, and below the address rather than above it: changing a
+          password is the rarest reason to be on this page. */}
+      <ChangePasswordPanel onChanged={onHunterChanged} />
       <SignOut onSignedOut={onSignedOut} />
     </div>
   )
