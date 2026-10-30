@@ -393,7 +393,9 @@ then the async flow, then deploy, then scale.
 - **Tasks:**
   - [~] Authentication/authorization for users — *hunter login landed early, in Phase 8 slice 3
         (2026-10-30), because the dashboard needed it. Still open here: a password reset flow
-        (blocked on outbound email), brute-force protection on the public login form (belongs with
+        (designed in [`docs/password-reset.md`](./docs/password-reset.md) — **not** blocked on outbound
+        email after all: sending needs a provider and DNS records, not a re-architecture, and email
+        is the chosen channel over SMS), brute-force protection on the public login form (belongs with
         Turnstile, and arguably should not reach production before it), and authorizing
         detection-history's read API before it is ever exposed.*
   - [ ] Billing (Stripe) tied to SMS usage
