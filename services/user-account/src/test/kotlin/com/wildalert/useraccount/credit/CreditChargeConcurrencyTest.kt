@@ -143,7 +143,7 @@ class CreditChargeConcurrencyTest {
     /** A committed hunter whose balance is exactly [balanceMinor]. */
     private fun hunterWithBalance(balanceMinor: Long): UUID {
         val hunter = hunters.register(
-            RegisterHunterRequest("race-test-${UUID.randomUUID()}@example.com", "+420123456789"),
+            RegisterHunterRequest("race-test-${UUID.randomUUID()}@example.com", "+420123456789", "correct-horse"),
         )
         val id = hunter.id!!
         created += id

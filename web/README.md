@@ -32,24 +32,29 @@ npm run dev                                   # http://localhost:5173
 
 ## How it talks to the API
 
-The browser calls a **same-origin** `/api/hunters`, and Vite's dev server proxies it to
+The browser calls same-origin `/api/...` paths, and Vite's dev server proxies them to
 `http://localhost:8081` (`server.proxy` in `vite.config.ts`; override the target with
 `VITE_API_PROXY_TARGET` in `.env.local`).
 
 That is why this app needed no CORS configuration and no change to any Kotlin service.
 
 In production the same trick is played by **`services/gateway`** (Spring Cloud Gateway, servlet
-flavour), which serves these built files *and* forwards `POST /api/hunters` to the private
-`user-account` with a Google ID token — one origin, so again no CORS. Its Docker image builds
-this app and copies `dist/` into the jar, so the page and the API it calls can never be different
-versions of each other.
+flavour), which serves these built files *and* forwards the four browser-facing calls to the
+private `user-account` with a Google ID token — one origin, so again no CORS. Its Docker image
+builds this app and copies `dist/` into the jar, so the page and the API it calls can never be
+different versions of each other.
+
+The session cookie passes straight through the gateway in both directions; it is `HttpOnly`, so
+nothing in this app reads it — the browser attaches it to these same-origin requests by itself.
 
 **`user-account` is private on Cloud Run** (`Require authentication`), so this app can never be
 pointed straight at the deployed service — only at the gateway, or at a local user-account.
 
-Note the gateway's route list is deliberately **one method and one path**. `user-account`'s
-lookup endpoints (`by-email`, `by-inbound-address`, `GET /api/hunters/{id}`) all return a hunter's
-phone number and are *not* proxied, so don't expect them to work from the browser.
+Note the gateway's route list is deliberately **exact method+path pairs, never a wildcard**:
+`POST /api/hunters`, `POST` and `DELETE /api/sessions`, `GET /api/me`. `user-account`'s lookup
+endpoints (`by-email`, `by-inbound-address`, `GET /api/hunters/{id}`) all return a hunter's phone
+number and are *not* proxied, so don't expect them to work from the browser — a hunter reads their
+own record through `/api/me`, which user-account authenticates from the session cookie.
 
 ## Gotchas
 
@@ -75,15 +80,24 @@ phone number and are *not* proxied, so don't expect them to work from the browse
 ```
 src/
   main.tsx                 mounts React
-  App.tsx                  the one bit of state: registered hunter or not
-  RegisterForm.tsx          the form, field errors, submit state
-  InboundAddressPanel.tsx   success: the address, copy button, setup help
-  api.ts                   POST /api/hunters
+  App.tsx                  three screens: loading / anonymous / dashboard
+  RegisterForm.tsx          register, field errors, submit state
+  LoginForm.tsx             sign in
+  Dashboard.tsx             credit panel + the address panel + sign out
+  InboundAddressPanel.tsx   the address, copy button, setup help
+  Field.tsx                 label + control + hint/error, shared by both forms
+  api.ts                   register / login / logout / me
+  credit.ts                haléře -> "25.00 CZK" and "about N alerts"       (pure, tested)
   problemDetail.ts         RFC 9457 error body -> message + field errors   (pure, tested)
-  validation.ts            email + E.164 checks mirroring the server       (pure, tested)
+  validation.ts            email, E.164 and password rules, mirroring the server (pure, tested)
   types.ts                 the wire contract, mirroring HunterDtos.kt
   styles.css               Tailwind entry + theme tokens
 ```
+
+**There is no router, deliberately.** The session cookie does a URL's job: `App.tsx` asks
+`GET /api/me` on load, so a refresh, a reopened tab or a visit tomorrow all land on the dashboard.
+Adding routes would mean a new npm dependency (see the `npm install` gotcha above) *and* an SPA
+fallback in the gateway, which does not exist — any unknown path there is a 404 today.
 
 `types.ts` and `validation.ts` duplicate things that live in Kotlin
 (`HunterDtos.kt`). That duplication is deliberate — there is no shared schema — and each copy

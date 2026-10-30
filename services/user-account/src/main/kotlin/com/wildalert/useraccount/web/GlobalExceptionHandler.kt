@@ -4,6 +4,7 @@ import com.wildalert.useraccount.hunter.DuplicateEmailException
 import com.wildalert.useraccount.hunter.HunterNotFoundByEmailException
 import com.wildalert.useraccount.hunter.HunterNotFoundByInboundAddressException
 import com.wildalert.useraccount.hunter.HunterNotFoundException
+import com.wildalert.useraccount.hunter.InvalidCredentialsException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -28,6 +29,18 @@ class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateEmailException::class)
     fun handleDuplicate(ex: DuplicateEmailException): ProblemDetail =
         ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.message ?: "Conflict")
+
+    /**
+     * A failed login → 401, with the exception's own deliberately uninformative message.
+     *
+     * One handler for every cause (unknown email, wrong password, no password, deactivated) so
+     * the four cannot drift into four distinguishable responses. Matches the body shape of
+     * ProblemDetailAuthenticationEntryPoint, which answers the same 401 when the *filter chain*
+     * rejects a request rather than a controller.
+     */
+    @ExceptionHandler(InvalidCredentialsException::class)
+    fun handleInvalidCredentials(ex: InvalidCredentialsException): ProblemDetail =
+        ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.message ?: "Unauthorized")
 
     /** Bean-validation failures (@Valid) → 400 with a field→message map. */
     @ExceptionHandler(MethodArgumentNotValidException::class)

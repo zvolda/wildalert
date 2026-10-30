@@ -9,6 +9,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.never
 import org.mockito.BDDMockito.then
 import org.mockito.Mockito.mock
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.util.ReflectionTestUtils
 import java.util.Optional
 import java.util.UUID
@@ -18,7 +19,20 @@ class HunterServiceTest {
 
     private val repository = mock(HunterRepository::class.java)
     private val credit = mock(CreditService::class.java)
-    private val service = HunterService(repository, InboundAddresses("in.wildalert.test"), credit)
+
+    /**
+     * A trivial stand-in for the real encoder. These tests are about the service's branching --
+     * which input leads to which exception -- not about BCrypt, and a real delegating encoder
+     * would add ~100ms of key stretching to every single case for no assurance whatsoever.
+     */
+    private val passwordEncoder = object : PasswordEncoder {
+        override fun encode(rawPassword: CharSequence): String = "encoded:$rawPassword"
+        override fun matches(rawPassword: CharSequence, encodedPassword: String?): Boolean =
+            encodedPassword == "encoded:$rawPassword"
+    }
+
+    private val service =
+        HunterService(repository, InboundAddresses("in.wildalert.test"), credit, passwordEncoder)
 
     @Test
     fun `register saves a new hunter when the email is free`() {
@@ -27,7 +41,7 @@ class HunterServiceTest {
         given(repository.save(any(Hunter::class.java))).willAnswer { withId(it.getArgument(0), id) }
 
         val result = service.register(
-            RegisterHunterRequest("hunter@example.com", "+420123456789"),
+            RegisterHunterRequest("hunter@example.com", "+420123456789", "correct-horse"),
         )
 
         assertThat(result.email).isEqualTo("hunter@example.com")
@@ -42,7 +56,7 @@ class HunterServiceTest {
         given(repository.existsByEmail("hunter@example.com")).willReturn(false)
         given(repository.save(any(Hunter::class.java))).willAnswer { withId(it.getArgument(0), id) }
 
-        service.register(RegisterHunterRequest("hunter@example.com", "+420123456789"))
+        service.register(RegisterHunterRequest("hunter@example.com", "+420123456789", "correct-horse"))
 
         // Same transaction as the insert, so a hunter can never exist without a balance.
         then(credit).should().openAccount(id)
@@ -53,7 +67,7 @@ class HunterServiceTest {
         given(repository.existsByEmail("hunter@example.com")).willReturn(true)
 
         assertThrows<DuplicateEmailException> {
-            service.register(RegisterHunterRequest("hunter@example.com", "+420123456789"))
+            service.register(RegisterHunterRequest("hunter@example.com", "+420123456789", "correct-horse"))
         }
 
         // Otherwise a 409 would leave an orphan credit row behind, granting credit to a hunter
@@ -95,7 +109,7 @@ class HunterServiceTest {
         given(repository.existsByEmail("dup@example.com")).willReturn(true)
 
         assertThrows<DuplicateEmailException> {
-            service.register(RegisterHunterRequest("dup@example.com", "+420123456789"))
+            service.register(RegisterHunterRequest("dup@example.com", "+420123456789", "correct-horse"))
         }
         then(repository).should(never()).save(any(Hunter::class.java))
     }
@@ -116,7 +130,7 @@ class HunterServiceTest {
             .willAnswer { withId(it.getArgument(0), UUID.randomUUID()) }
 
         val result = service.register(
-            RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789"),
+            RegisterHunterRequest("  Hunter@Example.COM ", "+420123456789", "correct-horse"),
         )
 
         assertThat(result.email).isEqualTo("hunter@example.com")
@@ -165,6 +179,95 @@ class HunterServiceTest {
         assertThat(updated.active).isFalse()
         assertThat(updated.email).isEqualTo("a@b.com") // unchanged
     }
+
+    @Test
+    fun `register stores an encoded password, never the password itself`() {
+        given(repository.existsByEmail("hunter@example.com")).willReturn(false)
+        given(repository.save(any(Hunter::class.java)))
+            .willAnswer { withId(it.getArgument(0), UUID.randomUUID()) }
+
+        val result = service.register(
+            RegisterHunterRequest("hunter@example.com", "+420123456789", "correct-horse"),
+        )
+
+        // The real encoder's output is opaque; the fake's is readable, which is why this asserts
+        // the encoder was *used* rather than asserting a hash shape.
+        assertThat(result.passwordHash).isEqualTo("encoded:correct-horse")
+        assertThat(result.passwordHash).isNotEqualTo("correct-horse")
+    }
+
+    @Test
+    fun `authenticate returns the hunter when the password matches`() {
+        val hunter = hunterWithPassword("correct-horse", active = true)
+        given(repository.findByEmail("hunter@example.com")).willReturn(hunter)
+
+        val result = service.authenticate(LoginRequest("hunter@example.com", "correct-horse"))
+
+        assertThat(result).isSameAs(hunter)
+    }
+
+    @Test
+    fun `authenticate normalizes the email, so the case it was typed in does not matter`() {
+        val hunter = hunterWithPassword("correct-horse", active = true)
+        // Stubbed for the normalized form only -- a raw-input lookup would miss entirely.
+        given(repository.findByEmail("hunter@example.com")).willReturn(hunter)
+
+        val result = service.authenticate(LoginRequest("  Hunter@Example.COM ", "correct-horse"))
+
+        assertThat(result).isSameAs(hunter)
+    }
+
+    /**
+     * The four ways a login can fail must be indistinguishable to the caller. Asserting they all
+     * throw the *same* exception type with the *same* message is how that stays true: anyone who
+     * later "improves" one of these into a helpful "no such account" breaks this test, which is
+     * the point. A helpful message here is an account-existence oracle.
+     */
+    @Test
+    fun `every kind of failed login throws the same indistinguishable error`() {
+        val cases = mapOf(
+            "unknown email" to {
+                given(repository.findByEmail("nobody@example.com")).willReturn(null)
+                LoginRequest("nobody@example.com", "correct-horse")
+            },
+            "wrong password" to {
+                given(repository.findByEmail("hunter@example.com"))
+                    .willReturn(hunterWithPassword("correct-horse", active = true))
+                LoginRequest("hunter@example.com", "wrong-password")
+            },
+            "a hunter registered before passwords existed" to {
+                given(repository.findByEmail("legacy@example.com"))
+                    .willReturn(Hunter("legacy@example.com", "+420123456789", active = true))
+                LoginRequest("legacy@example.com", "correct-horse")
+            },
+            "a deactivated hunter with the right password" to {
+                given(repository.findByEmail("gone@example.com"))
+                    .willReturn(hunterWithPassword("correct-horse", active = false, email = "gone@example.com"))
+                LoginRequest("gone@example.com", "correct-horse")
+            },
+        )
+
+        val messages = cases.map { (description, arrange) ->
+            val request = arrange()
+            val thrown = assertThrows<InvalidCredentialsException>(
+                "expected $description to be refused",
+            ) { service.authenticate(request) }
+            thrown.message
+        }
+
+        assertThat(messages).hasSize(4)
+        assertThat(messages.distinct())
+            .describedAs("all four refusals must read identically")
+            .hasSize(1)
+    }
+
+    private fun hunterWithPassword(
+        raw: String,
+        active: Boolean,
+        email: String = "hunter@example.com",
+    ): Hunter =
+        Hunter(email, "+420123456789", active = active)
+            .also { it.setPassword(passwordEncoder.encode(raw)) }
 
     /**
      * Stands in for what JPA does on insert. `Hunter.id` has a protected setter so nothing can

@@ -78,6 +78,7 @@ Key realities established during planning:
 | Technology | Status / fit | Where |
 |---|---|---|
 | **Spring Boot + PostgreSQL** | In use (3 services, Flyway). Deepen with a detection-history table and the **transactional outbox** pattern. | Phase 5, 8 |
+| **Spring Security** | **In use** (user-account, 2026-10-30): a `SecurityFilterChain`, `DelegatingPasswordEncoder`, a custom `AuthenticationEntryPoint` and an `OncePerRequestFilter` that resolves a session cookie. Sessions are hand-rolled (`hunter_session` + the filter) on this project's usual principle — **Spring Session JDBC is the natural next step**, replacing something already understood. The lesson worth keeping: adding the starter secures every endpoint by default, which in a service other services call is a silent outage waiting to happen. | Phase 8, 9 |
 | **jOOQ** | **In use** (detection-history, 2026-10-26) for the reporting reads, with user-account staying on JPA so the two are directly comparable. Codegen from the Flyway SQL via `DDLDatabase` through in-memory H2, so the build needs no database at all — and a column renamed in SQL breaks the Kotlin at compile time. | Phase 8 |
 | **S3-compatible storage** | In use (`R2ImageStore`, S3 SDK). Deepen: boto3 fetch in recognition, presigned URLs, lifecycle rules, optional local S3-compatible server (check MinIO's current distribution/licensing; Garage/SeaweedFS as alternatives). GCS also offers an S3-compatible XML API (HMAC keys). | Phase 5, 7, 8 |
 | **Cloud Run** | Strong fit — default hosting for all containers. | Phase 6 |
@@ -347,8 +348,13 @@ then the async flow, then deploy, then scale.
   - **Why the edge is needed at all:** `user-account` is deployed `Require authentication` and
     serves hunters' phone numbers, so a browser cannot call it directly and should not be able to.
 - **Tasks:**
-  - [ ] Hunter signup + phone verification
-        — *signup form built in slice 1 (`web/`); phone verification still to do*
+  - [~] Hunter signup + login + phone verification
+        — *signup form built in slice 1 (`web/`); **login done in slice 3 (2026-10-30)**: a
+        password on registration, `POST`/`DELETE /api/sessions`, `GET /api/me`, and a dashboard
+        showing credit and the inbound address. Sessions are rows in `hunter_session` keyed on a
+        SHA-256 of the token, issued and validated by user-account; the gateway only forwards the
+        cookie. **No password reset** — it needs outbound email, which this project has never had
+        (Cloudflare Email Routing is inbound-only), so it waits. Phone verification still to do.*
   - [~] **The site on `wildalert.app`** — `deploy/site-worker/` written **and deployed**
         2026-10-29 (both routes attached); what remains is the two proxied `AAAA → 100::` records
         that switch it on, plus the SSL toggles — dashboard-only, since `wrangler` has no DNS
@@ -385,7 +391,11 @@ then the async flow, then deploy, then scale.
 - **Goal / learn:** auth, billing, scaling to thousands.
 - **Deliverable:** a monetizable, scalable product.
 - **Tasks:**
-  - [ ] Authentication/authorization for users
+  - [~] Authentication/authorization for users — *hunter login landed early, in Phase 8 slice 3
+        (2026-10-30), because the dashboard needed it. Still open here: a password reset flow
+        (blocked on outbound email), brute-force protection on the public login form (belongs with
+        Turnstile, and arguably should not reach production before it), and authorizing
+        detection-history's read API before it is ever exposed.*
   - [ ] Billing (Stripe) tied to SMS usage
   - [ ] GPU inference option for burst volume
   - [ ] Monitoring/observability, load testing to "thousands of users"

@@ -84,4 +84,38 @@ describe('parseProblem', () => {
     const { message } = parseProblem(500, { detail: 'Internal error', status: 500 })
     expect(message).toBe('Internal error')
   })
+
+  it('attributes a password validation error to the password field', () => {
+    // Would silently become banner text if 'password' were missing from FORM_FIELDS, which is
+    // the trap that comment in problemDetail.ts warns about.
+    const { message, fieldErrors } = parseProblem(400, {
+      title: 'Bad Request',
+      status: 400,
+      detail: 'Request validation failed',
+      errors: { password: 'must be 10-72 characters' },
+    })
+    expect(fieldErrors).toEqual({ password: 'must be 10-72 characters' })
+    expect(message).toBe('')
+  })
+
+  it('shows a failed login as a banner, never against one field', () => {
+    // The server refuses an unknown email, a wrong password, a passwordless legacy hunter and a
+    // deactivated account with one identical message. Pinning it to a field would undo that:
+    // "wrong password" next to the password box tells an attacker the email exists.
+    const { message, fieldErrors } = parseProblem(401, {
+      title: 'Unauthorized',
+      status: 401,
+      detail: 'Email or password is incorrect',
+    })
+    expect(fieldErrors).toEqual({})
+    expect(message).toBe('Email or password is incorrect')
+  })
+
+  it('reports the status, so a caller can tell "not signed in" from a real failure', () => {
+    // fetchMe relies on this: a 401 from /api/me is the ordinary answer for a visitor, not an
+    // error, and it must be distinguishable without matching on the message text.
+    expect(parseProblem(401, undefined).status).toBe(401)
+    expect(parseProblem(409, DUPLICATE_409).status).toBe(409)
+    expect(parseProblem(400, { errors: { email: 'nope' } }).status).toBe(400)
+  })
 })

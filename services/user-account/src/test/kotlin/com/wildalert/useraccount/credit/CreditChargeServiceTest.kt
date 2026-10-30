@@ -234,7 +234,7 @@ class CreditChargeServiceTest {
     }
 
     private fun register() = hunters.register(
-        RegisterHunterRequest("charge-test-${UUID.randomUUID()}@example.com", "+420123456789"),
+        RegisterHunterRequest("charge-test-${UUID.randomUUID()}@example.com", "+420123456789", "correct-horse"),
     ).also { credits.flush() }
 
     private fun request(amountMinor: Long, type: EntryType = EntryType.SMS_DEBIT) =

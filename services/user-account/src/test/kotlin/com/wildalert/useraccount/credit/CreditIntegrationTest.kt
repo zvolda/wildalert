@@ -135,7 +135,7 @@ class CreditIntegrationTest {
     private fun registerHunter(): UUID {
         // The email is unique-constrained and this runs against a shared dev database.
         val hunter = hunters.register(
-            RegisterHunterRequest("credit-test-${UUID.randomUUID()}@example.com", "+420123456789"),
+            RegisterHunterRequest("credit-test-${UUID.randomUUID()}@example.com", "+420123456789", "correct-horse"),
         )
         credits.flush()
         return hunter.id!!

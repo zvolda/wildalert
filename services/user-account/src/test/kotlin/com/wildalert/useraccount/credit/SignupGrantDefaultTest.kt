@@ -31,7 +31,7 @@ class SignupGrantDefaultTest {
     @Test
     fun `a new hunter is granted nothing by default`() {
         val hunter = hunters.register(
-            RegisterHunterRequest("grant-default-${UUID.randomUUID()}@example.com", "+420123456789"),
+            RegisterHunterRequest("grant-default-${UUID.randomUUID()}@example.com", "+420123456789", "correct-horse"),
         )
         credits.flush()
 
@@ -41,7 +41,7 @@ class SignupGrantDefaultTest {
     @Test
     fun `a zero grant still opens an account and still records the entry`() {
         val hunter = hunters.register(
-            RegisterHunterRequest("grant-default-${UUID.randomUUID()}@example.com", "+420123456789"),
+            RegisterHunterRequest("grant-default-${UUID.randomUUID()}@example.com", "+420123456789", "correct-horse"),
         )
         credits.flush()
         val id = hunter.id!!

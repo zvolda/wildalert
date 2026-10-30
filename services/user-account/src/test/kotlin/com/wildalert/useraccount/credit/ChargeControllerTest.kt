@@ -7,6 +7,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.then
 import org.mockito.BDDMockito.willThrow
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.http.MediaType
 import org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -16,8 +17,16 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.util.UUID
 
-/** The HTTP layer of the charge endpoints: routing, JSON, validation, error mapping. */
+/**
+ * The HTTP layer of the charge endpoints: routing, JSON, validation, error mapping.
+ *
+ * `addFilters = false` for the same reason as HunterControllerTest: Spring Security is on the
+ * classpath now and would otherwise sit in front of every request here. That these endpoints
+ * remain reachable *with the real chain in place* is the one thing SecurityConfigTest exists to
+ * prove -- it is what keeps notification able to charge for an alert.
+ */
 @WebMvcTest(ChargeController::class)
+@AutoConfigureMockMvc(addFilters = false)
 class ChargeControllerTest {
 
     @Autowired

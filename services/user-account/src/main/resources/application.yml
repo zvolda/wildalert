@@ -7,6 +7,14 @@ spring:
   config:
     import: optional:file:.env[.properties]
 
+  autoconfigure:
+    # Spring Boot's security starter otherwise invents a user called "user" with a random
+    # password and prints it at every startup ("Using generated security password: ..."). Nothing
+    # can use it -- SecurityConfig disables HTTP Basic and form login -- so it is misleading log
+    # noise today, and a real credential the moment anyone turns either of those back on. The
+    # only identities this service recognises are hunters with sessions.
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+
   datasource:
     url: ${DATABASE_URL}
     username: ${POSTGRES_USER}
@@ -55,6 +63,35 @@ billing:
   # alert that is going out anyway rather than costing an SMS of its own. 500 haléře is two
   # alerts with their recognition at 100 + 150.
   low-balance-threshold-minor: ${LOW_BALANCE_THRESHOLD_MINOR:500}
+
+  # What one alert costs a hunter end to end: recognition (100) plus the SMS (150). Returned on
+  # HunterResponse purely so the dashboard can say "about ten alerts left" instead of "25.00 CZK",
+  # which is the number a hunter can actually act on.
+  #
+  # **Known duplication.** notification owns billing.sms-cost-minor (150) and recognition will own
+  # its own debit; those are the internal amounts each service charges. This is the price shown to
+  # a hunter. They can drift, and consolidating them is the job to do when recognition starts
+  # charging -- recorded in STATUS.md rather than left as a surprise.
+  alert-price-minor: ${ALERT_PRICE_MINOR:250}
+
+session:
+  # How long a login lasts. Absolute, not sliding: a sliding window would mean a database write on
+  # every authenticated request to save a hunter who checks their credit monthly from logging in
+  # again. 30 days is long enough that logging in is rare and short enough to bound the damage of
+  # a stolen cookie.
+  ttl-days: ${SESSION_TTL_DAYS:30}
+
+  cookie:
+    name: ${SESSION_COOKIE_NAME:wa_session}
+
+    # **False by default, and that default matters.** A `Secure` cookie is silently *not set* over
+    # plain http, so hardcoding true would make local dev on http://localhost:5173 look like a
+    # login that does nothing -- no error, no cookie, straight back to the form. Set
+    # SESSION_COOKIE_SECURE=true on the Cloud Run revision, where everything is https.
+    #
+    # The opposite default to signup-grant-minor's, for the opposite reason: forgetting the grant
+    # must give nothing away, while forgetting this must not break the developer's login.
+    secure: ${SESSION_COOKIE_SECURE:false}
 
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the

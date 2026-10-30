@@ -17,10 +17,14 @@ import org.springframework.web.servlet.function.ServerResponse
  * **The allowlist is the security model here, so it is deliberately narrow.** `user-account`
  * exposes several endpoints that each return a hunter's **phone number**, and a convenient
  * wildcard route under `/api/hunters` would publish every one of them to anyone who guessed the
- * URL. So the only route is the exact method and path the registration form needs:
- * `POST /api/hunters`.
+ * URL. So each route is an exact method and path that the React app actually needs:
  *
- * Deliberately **not** proxied, and each for that reason:
+ * - `POST /api/hunters` — register (and, since it now also issues a session, log in)
+ * - `POST /api/sessions` — log in
+ * - `DELETE /api/sessions` — log out
+ * - `GET /api/me` — the signed-in hunter's own record
+ *
+ * Deliberately **still not** proxied, and each for the original reason:
  * - `GET /api/hunters/{id}`
  * - `GET /api/hunters/by-email`
  * - `GET /api/hunters/by-inbound-address`
@@ -28,11 +32,18 @@ import org.springframework.web.servlet.function.ServerResponse
  *   also *spend the hunter's credit*, so reaching them from a browser would let anyone drain an
  *   account as well as read a phone number.
  *
+ * `GET /api/me` is what makes keeping those closed sustainable rather than merely strict. The
+ * earlier note here said a hunter reading their own record "needs authentication first, which
+ * this service cannot yet do" — and it still cannot, which is the point: user-account
+ * authenticates the hunter from a session cookie, and this service only forwards it. The identity
+ * is asserted by the service that owns the hunter table, never by the edge.
+ *
+ * The cookie rides along in both directions because [withCredential] *adds* a header rather than
+ * replacing the header set; `ApiRoutesTest` pins that, because a proxy silently dropping
+ * `Set-Cookie` would look exactly like a broken login.
+ *
  * Anything not matched here falls through to the static React app, and an unmatched API path
  * ends up a 404 from this service — it never reaches user-account at all.
- *
- * Opening more routes is a Phase 9 job and needs authentication first: a hunter should be able to
- * read *their own* record, which means knowing who is asking, which this service cannot yet do.
  */
 // proxyBeanMethods = false: no CGLIB subclass. Needed as well as preferred here -- the Kotlin
 // default value on `auth` below leaves no no-arg constructor for CGLIB to call, which fails at
@@ -55,6 +66,9 @@ class ApiRoutes(
             // http() with no argument takes its target from the `uri` before-filter below.
             // Passing the URI to http() directly is deprecated.
             .POST("/api/hunters", http())
+            .POST("/api/sessions", http())
+            .DELETE("/api/sessions", http())
+            .GET("/api/me", http())
             .before(uri(userAccountBaseUrl))
             .before(::withCredential)
             .build()

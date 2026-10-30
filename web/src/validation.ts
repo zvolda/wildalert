@@ -1,4 +1,11 @@
-import type { FieldErrors, RegisterHunterRequest } from './types'
+import type { FieldErrors, LoginRequest, RegisterHunterRequest } from './types'
+
+/**
+ * Copied deliberately from PASSWORD_MIN_LENGTH / PASSWORD_MAX_LENGTH in HunterDtos.kt. The upper
+ * bound is BCrypt's: it truncates at 72 bytes, so characters past that would silently do nothing.
+ */
+const PASSWORD_MIN_LENGTH = 10
+const PASSWORD_MAX_LENGTH = 72
 
 /**
  * Client-side copies of the server's rules, so the form can answer without a round trip.
@@ -31,6 +38,25 @@ export function validateEmail(email: string): string | undefined {
 }
 
 /**
+ * The password rule, for the registration form only.
+ *
+ * Note it counts characters of the **untrimmed** value: spaces are legitimate password
+ * characters, and silently stripping them would mean the password a hunter typed is not the one
+ * we store, which they would discover at their next login and never be able to explain.
+ */
+export function validateNewPassword(password: string): string | undefined {
+  if (password === '') return 'Choose a password'
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `Use at least ${PASSWORD_MIN_LENGTH} characters`
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    // Not a server-side limit we are guessing at -- past 72 bytes BCrypt ignores the rest.
+    return `Use at most ${PASSWORD_MAX_LENGTH} characters`
+  }
+  return undefined
+}
+
+/**
  * What actually gets sent. Trimming matters more than it looks: the server validates the **raw**
  * body with Jakarta's `@Email`, and only normalises (trim + lowercase) afterwards in
  * `HunterService.register`. So a trailing space is rejected with
@@ -45,6 +71,10 @@ export function forSubmission(request: RegisterHunterRequest): RegisterHunterReq
   return {
     email: request.email.trim(),
     phone: request.phone.trim(),
+    // **Not trimmed, deliberately.** A space is a perfectly good password character, and
+    // trimming here would store something other than what was typed -- a mismatch the hunter
+    // would meet at their next login with no way to work out why.
+    password: request.password,
   }
 }
 
@@ -55,6 +85,29 @@ export function validateRegistration(request: RegisterHunterRequest): FieldError
   if (email) errors.email = email
   const phone = validatePhone(request.phone)
   if (phone) errors.phone = phone
+  const password = validateNewPassword(request.password)
+  if (password) errors.password = password
+  return errors
+}
+
+/** The login form's rules: presence only. */
+export function loginForSubmission(request: LoginRequest): LoginRequest {
+  return { email: request.email.trim(), password: request.password }
+}
+
+/**
+ * Validates the login form.
+ *
+ * Deliberately does *not* apply the password policy. Restating "at least 10 characters" on a
+ * login form would announce the rule to anyone, and would lock out a hunter whose password
+ * predates whatever the rule becomes. Presence is all the client can usefully check; the server
+ * answers everything else with one 401.
+ */
+export function validateLogin(request: LoginRequest): FieldErrors {
+  const errors: FieldErrors = {}
+  const email = validateEmail(request.email)
+  if (email) errors.email = email
+  if (request.password === '') errors.password = 'Enter your password'
   return errors
 }
 

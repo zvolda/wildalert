@@ -11,9 +11,15 @@ export interface ParsedProblem {
   /** Shown as a banner. Empty when every part of the problem landed on a field instead. */
   message: string
   fieldErrors: FieldErrors
+  /**
+   * The HTTP status, kept so a caller can tell one failure from another without re-reading the
+   * message. `fetchMe` needs it: a 401 there means "nobody is signed in", which is an ordinary
+   * answer rather than an error. Absent for a transport failure, where there was no response.
+   */
+  status?: number
 }
 
-const FORM_FIELDS: readonly FormField[] = ['email', 'phone']
+const FORM_FIELDS: readonly FormField[] = ['email', 'phone', 'password']
 
 function isFormField(name: string): name is FormField {
   return (FORM_FIELDS as readonly string[]).includes(name)
@@ -35,7 +41,7 @@ export function parseProblem(status: number, body: unknown): ParsedProblem {
         unmapped.push(`${field}: ${message}`)
       }
     }
-    return { message: unmapped.join('; '), fieldErrors }
+    return { message: unmapped.join('; '), fieldErrors, status }
   }
 
   // 409: the email is taken. That is a problem with a specific field, so show it there rather
@@ -44,10 +50,14 @@ export function parseProblem(status: number, body: unknown): ParsedProblem {
     return {
       message: '',
       fieldErrors: { email: problem?.detail ?? 'That email address is already registered' },
+      status,
     }
   }
 
-  return { message: genericMessage(status, problem), fieldErrors: {} }
+  // 401 deliberately falls through to a banner. A failed login cannot be attributed to the email
+  // or the password without revealing which one was wrong, which is the whole reason the server
+  // answers both with one message -- so showing it next to a single field would undo that.
+  return { message: genericMessage(status, problem), fieldErrors: {}, status }
 }
 
 function genericMessage(status: number, problem: ProblemDetail | undefined): string {
