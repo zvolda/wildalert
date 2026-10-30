@@ -1617,6 +1617,73 @@ registration, a login, a logout, and one authenticated page showing the balance 
   would make local dev look like a broken login otherwise) and a new gateway image, since the
   gateway bundles the React build.
 
+
+### Deployed to prod (2026-10-30, same day as the merge)
+
+Both services live from image tag **`161fe43`** (merged main, PR #32):
+**`user-account-00005-sjb`** and **`gateway-00002-twt`**.
+
+- **Flyway applied V5 to production Cloud SQL**: "Current version of schema: 4" → "Successfully
+  applied 1 migration … now at version v5" in 0.26s, service up in 15.5s. The startup probe points
+  at `/actuator/health/readiness`, which includes `db`, so a failed migration would have left the
+  revision never serving and prod running `00004-pgg` — the safety net working as designed rather
+  than as a hope.
+- **`SESSION_COOKIE_SECURE=true` is set on the revision**, and the live `Set-Cookie` proves it:
+  `wa_session=…; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax`. Set with
+  `--update-env-vars`, never `--set-env-vars`, which would have dropped `DATABASE_URL`,
+  `POSTGRES_USER`, `INBOUND_EMAIL_DOMAIN` and the `POSTGRES_PASSWORD` secret reference.
+- **`SIGNUP_GRANT_MINOR` is still unset, deliberately**, and the deploy check confirms it end to
+  end: a hunter registered through the real edge came back `creditBalanceMinor: 0`. The grant stays
+  off until Turnstile is in front of the form.
+- **Verified through the public edge, not the private service.** Health 200; the app served (not a
+  404, so the `web/dist` copy landed); `GET /api/me` and `POST /api/sessions` answer **401 rather
+  than 404**, which is what proves the new routes exist *and* the gateway's ID token is being
+  accepted; `by-email` and `charges` still **404 at the gateway**, so the allowlist is intact.
+  Then the full round trip: register → 201 with a `Secure` cookie → `/api/me` 200 → logout 204 →
+  `/api/me` 401 → log back in with the password → 200.
+- **The served bundle is the right build**, checked rather than assumed: `assets/index-nJWIFrnb.js`
+  is the same hash the local `vite build` produced, and it contains the new copy ("Sign in",
+  "Your credit", "no password reset yet", "Where to send photos").
+
+**The sequencing mistake, written down because the reasoning was half right.** user-account went
+first on the grounds that its additions are additive and the new UI needs them — true, but
+incomplete: `password` became a **required** field on `POST /api/hunters`, which is a *breaking*
+change for the old client. So for about six minutes the live gateway served the old React app
+against the new contract and every registration answered **400** (confirmed deliberately with the
+old payload, rather than assumed). Blast radius was small — `wildalert.app` still has no A/AAAA
+record, so only the unadvertised `run.app` URL was affected — but the honest rule is the one
+`STATUS.md` already states for the notification/user-account pair: when a field becomes required,
+the client and the server have to ship together, or the client ships first. Making `password`
+optional on the endpoint for one release would have removed the window entirely.
+
+**Two Cloud Build facts worth knowing before the next deploy.**
+- **Merging to main already builds everything with a trigger.** All four triggers are
+  `--branch=main` push triggers, so PR #32's merge fired `user-account`, `notification`,
+  `email-ingestion` and `recognition` builds at 17:25 on its own. A manual
+  `gcloud builds triggers run user-account-main` afterwards was pure duplication — `161fe43`
+  already existed in Artifact Registry — and it queued behind the automatic ones. Check
+  `gcloud artifacts docker tags list …/<service>` for the merge commit's tag before building
+  anything by hand.
+- **There is no `gateway` trigger** (nor a `detection-history` one), so the gateway still needs a
+  manual `gcloud builds submit`, and it now needs
+  `--service-account=…wildalert-cloudbuild@…` since the compute default was emptied. **Creating a
+  `gateway-main` trigger is the obvious follow-up** — it would have made this deploy two commands.
+- **The `europe-west3` queue serialises, and the build region is independent of the Artifact
+  Registry region.** The gateway build sat `QUEUED` behind the automatic `recognition` build (the
+  longest in the repo — torch plus model weights), which could not be cancelled from here. Re-
+  submitting the *same* config with no `--region` built it in the **global** region instead, and
+  the image still pushed to the `europe-west3` repository. A useful escape hatch, not a workaround
+  to be ashamed of.
+
+**Left behind, on purpose and worth a tidy-up:** the deploy check registered
+`deploy-check-1793381934@example.com` in production. It holds **0 credit**, so it cannot cost an
+SMS or a DeepFaune run, and there is no delete endpoint — user-account is private and `PUT
+/api/hunters/{id}` is not proxied — so removing it means a Cloud SQL session or a console step.
+
+**Still true after the deploy:** nobody has opened the new screens in a **browser**. The data path
+is now proven in production end to end; the pixels are not. And the login form is publicly
+reachable at the `run.app` URL with **no brute-force protection**, which is the argument for doing
+Turnstile next rather than after the DNS switch.
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
