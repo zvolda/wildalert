@@ -265,6 +265,35 @@ goes live once Flyway has run and Cloud SQL is reachable.
 
 ## Troubleshooting
 
+**A build compiles and then fails at PUSH, with no logs at all.** The symptom (seen 2026-10-30) is
+a `FAILURE` whose `statusDetail` and `failureInfo` are both `null`, a docker build step marked
+`SUCCESS`, a `PUSH` entry in `timing`, and **two lines in Cloud Logging** (`starting build`,
+`FETCHSOURCE`) for a build that ran two minutes. That combination means the **trigger's service
+account** lost its permissions: `artifactregistry.writer` (so the push is denied) and
+`logging.logWriter` (so the build cannot tell you, because `cloudbuild.yaml` sets
+`logging: CLOUD_LOGGING_ONLY`). A build runs *as that account*, not as you.
+
+It happened here by stripping `roles/editor` from the default compute service account — a
+deliberate hardening step — while all four triggers still named it. Check first, and after any
+change to a build identity:
+
+```bash
+gcloud builds triggers list --region europe-west3 --format="table(name,serviceAccount)"
+```
+
+The fix is to repoint each trigger at the dedicated account (which already holds the two roles),
+**not** to re-grant anything to the compute default:
+
+```bash
+gcloud builds triggers update github notification-main --region=europe-west3 \
+  --service-account=projects/wildalert-prod/serviceAccounts/wildalert-cloudbuild@wildalert-prod.iam.gserviceaccount.com
+gcloud builds triggers run notification-main --region=europe-west3 --branch=main
+```
+
+Note that `gcloud builds retry` does not exist in this SDK — `triggers run` is the way to rebuild.
+And whichever services pushed in the minutes *before* such a change still look healthy while being
+equally broken for their next commit, so repoint all of them, not just the one that failed.
+
 **The deploy fails and the revision never becomes ready.** Read the container's own logs — the
 startup probe failing is a symptom, not the cause:
 

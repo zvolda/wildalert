@@ -1440,9 +1440,46 @@ and is switched on by the next.
   - **Tests:** notification 95, 0 failures (was 71) — 14 for the guard, 7 for the GoSMS read, 4
     pinning the shipped defaults, 2 for the endpoint, and one in `NotificationServiceTest` that an
     empty gateway charges nobody, claims nothing and leaves the event redeliverable.
-  - **Not deployed.** It is one `gcloud run deploy` on notification with no new variables (the
-    defaults are the intended configuration, as with `SIGNUP_GRANT_MINOR`'s zero) — and, per the
-    comma trap in slice 4, read the variables back off the template afterwards.
+  - **Deployed the same day: `notification-00007-2pl`, image `notification:26bf723`**, with **no new
+    variables** — the defaults are the intended configuration, as with `SIGNUP_GRANT_MINOR`'s zero.
+    All eleven variables were read back off the template afterwards (slice 4's comma trap) and are
+    byte-identical to the previous revision's; only the image and the revision name moved. The
+    startup log is the proof the guard is the code running: `Guarding SMS provider credit (a message
+    costs us 120 haléře, warning at 2000, re-read every PT5M)`.
+  - **The deploy was blocked for half an hour by something that had nothing to do with it, and the
+    ROADMAP had predicted it in writing.** Phase 7's "strip `roles/editor` from the default compute
+    service account" was done in the console at **07:03:41 UTC**, and the Cloud Build triggers still
+    named that account. The failure mode is nasty precisely because it is so quiet:
+    - `gcloud builds submit` runs **as the trigger's service account**, so the docker build step
+      still succeeded (it needs no GCP permission at all) and the **PUSH** step then failed. The
+      build is reported `FAILURE` with `statusDetail: null` and `failureInfo: null`.
+    - **There were no build logs to read**, because the same strip removed `logging.logWriter` and
+      `deploy/cloudbuild.yaml` sets `logging: CLOUD_LOGGING_ONLY`. Cloud Logging held two lines
+      (`starting build`, `FETCHSOURCE`) for a build that ran for two minutes. A build that fails
+      *and* cannot say why is the real cost of this ordering.
+    - **Which two services failed was pure timing, not code.** recognition and email-ingestion
+      pushed at 07:01 and 07:03:53 — the latter finishing **12 seconds** before the IAM change —
+      so they look fine and are equally broken for their next commit. notification and
+      user-account started at 07:07 and failed. Nothing about the code differed.
+    - **The fix was not to re-grant anything**, which would have undone the hardening.
+      `wildalert-cloudbuild@` already existed and already held exactly `artifactregistry.writer`
+      and `logging.logWriter`: the migration was simply half-finished, with no trigger pointing at
+      it. `gcloud builds triggers update github <name> --service-account=…/wildalert-cloudbuild@…`
+      on `notification-main` made the next build succeed first time.
+    - **Lesson, worth more than the half hour:** an identity change lands on whatever runs *next*,
+      so stripping a role and repointing the things that use it belong in one sitting. Checking
+      `gcloud builds triggers list --format="table(name,serviceAccount)"` before the strip would
+      have shown all four triggers naming the account about to be emptied.
+    - **State as of this entry: `notification-main` and `user-account-main` are repointed;
+      `email-ingestion-main` and `recognition-main` are not** — one identical command each, and
+      their `26bf723` images already exist, so they need no rebuild. `user-account`'s `26bf723`
+      image was never pushed; harmless, since that service's code is unchanged in this slice and
+      prod correctly runs the older image.
+  - **Not verified in prod beyond the startup log.** `GET /api/sms/credit` cannot be called from
+    here: the service is private, a user credential cannot mint an audience-scoped ID token
+    (`--audiences` is service-account only, and Cloud Run answers 401 at the edge), and
+    `gcloud run services proxy` is outside what this session may run. The next real emailed photo
+    exercises the guard anyway, since every alert now passes through it.
   - **Known gap, deliberately left:** nothing *watches* the warning. It is a log line in Cloud
     Logging, so it needs a log-based alert policy to reach a human — Phase 7's
     "structured logging + basic metrics/alerts" item, where it belongs with everything else that
