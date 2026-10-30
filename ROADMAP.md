@@ -288,7 +288,14 @@ then the async flow, then deploy, then scale.
         this is retried rather than acked: topping up fixes it, so the alert is worth keeping.
   - [ ] Structured logging + basic metrics/alerts
   - [ ] Basic auth on internal/admin endpoints
-  - [ ] **Strip `roles/editor` from the default compute service account**
+  - [~] **Strip `roles/editor` from the default compute service account** — **done in the console
+    2026-10-30 07:03 UTC, and it broke the next two builds exactly as the note below warned.**
+    `wildalert-cloudbuild@` had already been created with `artifactregistry.writer` +
+    `logging.logWriter`, but the four triggers still named the emptied compute default, so builds
+    compiled and then failed at PUSH **with no logs** (`CLOUD_LOGGING_ONLY` + no `logWriter`).
+    Fixed by repointing each trigger at the dedicated account; `notification-main` and
+    `user-account-main` are done, `email-ingestion-main` and `recognition-main` remain. Keep the
+    rest of this note: it is why the diagnosis took minutes instead of an afternoon.
     (`789527844011-compute@developer.gserviceaccount.com`). `wildalert-prod` has no parent
     organization, so Google's `iam.automaticIamGrantsForDefaultServiceAccounts` policy (default
     only for orgs created on/after 2024-05-03) never applied and the legacy automatic Editor grant
