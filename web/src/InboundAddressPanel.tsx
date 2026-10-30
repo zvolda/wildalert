@@ -3,6 +3,18 @@ import type { HunterResponse } from './types'
 
 interface Props {
   hunter: HunterResponse
+  /**
+   * Move focus to this panel's heading when it appears.
+   *
+   * True only right after registering, where the form the hunter was reading has just vanished
+   * and nothing else would announce the change. **False on the dashboard**, where this panel is
+   * simply part of a page that loaded: taking focus there would yank it away from a returning
+   * hunter on every single visit, which is the opposite of helpful.
+   */
+  moveFocusOnMount?: boolean
+  /** Differs between "you're registered" and a returning hunter's dashboard. */
+  title?: string
+  subtitle?: string
 }
 
 /**
@@ -12,15 +24,21 @@ interface Props {
  * Every value rendered comes from the response rather than from what was typed, because the
  * server normalises the email (trim + lowercase, see HunterService.normalizeEmail).
  */
-export default function InboundAddressPanel({ hunter }: Props) {
+export default function InboundAddressPanel({
+  hunter,
+  moveFocusOnMount = false,
+  title = "You're registered",
+  subtitle,
+}: Props) {
   const [copied, setCopied] = useState(false)
   const heading = useRef<HTMLHeadingElement>(null)
 
-  // The form that was being read is now gone. Moving focus to this heading tells a screen
-  // reader that the page changed under it, and gives a keyboard user a sensible place to be.
+  // After registering, the form that was being read is now gone, and moving focus to this
+  // heading tells a screen reader the page changed under it. On the dashboard there was no such
+  // change, so taking focus would be an unexplained jump -- hence the flag rather than always.
   useEffect(() => {
-    heading.current?.focus()
-  }, [])
+    if (moveFocusOnMount) heading.current?.focus()
+  }, [moveFocusOnMount])
 
   // Clear the "copied" acknowledgement again, so it reads as feedback on the last click
   // rather than as a permanent label.
@@ -48,12 +66,16 @@ export default function InboundAddressPanel({ hunter }: Props) {
         tabIndex={-1}
         className="text-lg font-medium outline-none"
       >
-        You're registered
+        {title}
       </h2>
       <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
-        Send trail-cam photos to this address and we'll text{' '}
-        <span className="font-medium text-stone-800 dark:text-stone-200">{hunter.phone}</span> with
-        what we find.
+        {subtitle ?? (
+          <>
+            Send trail-cam photos to this address and we'll text{' '}
+            <span className="font-medium text-stone-800 dark:text-stone-200">{hunter.phone}</span>{' '}
+            with what we find.
+          </>
+        )}
       </p>
 
       <div className="mt-5 rounded-lg bg-moss-50 p-4 dark:bg-moss-950">

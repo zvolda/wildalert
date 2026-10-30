@@ -33,6 +33,22 @@ class Hunter(
     var inboundToken: String = InboundAddresses.newToken()
         protected set
 
+    // The hunter's login credential, encoded by Spring Security's DelegatingPasswordEncoder (so
+    // the stored value carries its own algorithm prefix, e.g. "{bcrypt}$2a$10$...").
+    //
+    // Nullable because hunters registered before logins existed have no password. Null means
+    // "cannot log in" and is answered with the same generic 401 as a wrong password -- see
+    // SessionService. The setter is protected so a hash is only ever set through setPassword(),
+    // which makes "where does a password get stored?" a question with one answer.
+    @Column(name = "password_hash")
+    var passwordHash: String? = null
+        protected set
+
+    /** Store an already-encoded password hash. Encoding happens in the service, never here. */
+    fun setPassword(encoded: String) {
+        passwordHash = encoded
+    }
+
     // Hibernate generates the UUID on insert; null until the row is first saved.
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

@@ -1,6 +1,7 @@
 package com.wildalert.useraccount.hunter
 
 import com.wildalert.useraccount.credit.CreditService
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.util.UUID
@@ -14,6 +15,7 @@ class HunterService(
     private val repository: HunterRepository,
     private val inboundAddresses: InboundAddresses,
     private val credit: CreditService,
+    private val passwordEncoder: PasswordEncoder,
 ) {
 
     @Transactional
@@ -26,6 +28,10 @@ class HunterService(
             email = email,
             phone = request.phone,
         )
+        // Encoded before the row is written, so a plaintext password never reaches the database
+        // even transiently. The encoder is the delegating one, so the stored value names its own
+        // algorithm -- see SecurityConfig.
+        hunter.setPassword(passwordEncoder.encode(request.password))
         val saved = repository.save(hunter)
         // Inside this same transaction deliberately: a hunter must never exist without a credit
         // account, and a registration that fails after this point must leave neither behind.
@@ -43,6 +49,50 @@ class HunterService(
         val normalized = normalizeEmail(email)
         return repository.findByEmail(normalized) ?: throw HunterNotFoundByEmailException(normalized)
     }
+
+    /**
+     * The hunter with this email, or null.
+     *
+     * Distinct from getByEmail, which throws, because the login path must treat "no such hunter"
+     * and "wrong password" identically -- an exception here would be the first step towards
+     * answering those two cases differently, which is an account-existence oracle.
+     */
+    @Transactional(readOnly = true)
+    fun findByEmail(email: String): Hunter? = repository.findByEmail(normalizeEmail(email))
+
+    /**
+     * Verify a login, or throw InvalidCredentialsException.
+     *
+     * Every failure path does the same amount of work. When there is no hunter, or the hunter has
+     * no password, we still run the encoder against a throwaway hash before refusing -- otherwise
+     * an unknown email would answer in a millisecond and a known one in the ~100ms BCrypt costs,
+     * and that difference is enough to enumerate which addresses have accounts.
+     *
+     * The `active` check comes *after* the password check for the same reason: it must not be
+     * possible to learn that an address exists but is deactivated by how quickly we say no.
+     */
+    @Transactional(readOnly = true)
+    fun authenticate(request: LoginRequest): Hunter {
+        val hunter = findByEmail(request.email)
+        val storedHash = hunter?.passwordHash
+        if (storedHash == null) {
+            passwordEncoder.matches(request.password, absentHunterHash)
+            throw InvalidCredentialsException()
+        }
+        if (!passwordEncoder.matches(request.password, storedHash)) {
+            throw InvalidCredentialsException()
+        }
+        if (!hunter.active) {
+            throw InvalidCredentialsException()
+        }
+        return hunter
+    }
+
+    /**
+     * A real encoded hash to compare against when there is nothing to compare against, computed
+     * once. Encoded rather than hardcoded so it stays valid if the encoder's algorithm changes.
+     */
+    private val absentHunterHash: String by lazy { passwordEncoder.encode("no-such-hunter") }
 
     /** The hunter whose personal inbound address this is (the recipient of a trail-cam email). */
     @Transactional(readOnly = true)

@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   forSubmission,
   hasErrors,
+  loginForSubmission,
   validateEmail,
+  validateLogin,
+  validateNewPassword,
   validatePhone,
   validateRegistration,
 } from '../validation'
@@ -70,20 +73,28 @@ describe('forSubmission', () => {
     // A real 400 from user-account for "Browser.Check@Example.COM " (trailing space):
     // {"errors":{"email":"must be a valid email address"}} -- Jakarta's @Email sees the raw
     // value, and HunterService.register only trims afterwards.
-    expect(forSubmission({ email: '  Hunter@Example.com ', phone: '+420123456789' }))
-      .toEqual({ email: 'Hunter@Example.com', phone: '+420123456789' })
+    expect(forSubmission({ email: '  Hunter@Example.com ', phone: '+420123456789', password: 'correct-horse' }))
+      .toEqual({ email: 'Hunter@Example.com', phone: '+420123456789', password: 'correct-horse' })
   })
 
   it('trims the phone too', () => {
-    expect(forSubmission({ email: 'a@b.c', phone: ' +420123456789 ' }).phone)
+    expect(forSubmission({ email: 'a@b.c', phone: ' +420123456789 ', password: 'correct-horse' }).phone)
       .toBe('+420123456789')
   })
 
   it('does not change the case of the email', () => {
     // The server lowercases it and the UI renders what comes back, so there is nothing for the
     // client to second-guess here.
-    expect(forSubmission({ email: 'MiXeD@Case.COM', phone: '+420123456789' }).email)
+    expect(forSubmission({ email: 'MiXeD@Case.COM', phone: '+420123456789', password: 'correct-horse' }).email)
       .toBe('MiXeD@Case.COM')
+  })
+
+  it('leaves the password exactly as typed, spaces and all', () => {
+    // Deliberately unlike the other two fields. A space is a valid password character, and
+    // trimming would store something different from what the hunter typed -- which they would
+    // meet as a failed login later with no way to work out why.
+    expect(forSubmission({ email: 'a@b.c', phone: '+420123456789', password: '  spaced out  ' }).password)
+      .toBe('  spaced out  ')
   })
 })
 
@@ -92,14 +103,69 @@ describe('validateRegistration', () => {
     const errors = validateRegistration({
       email: 'hunter@example.com',
       phone: '+420123456789',
+      password: 'correct-horse',
     })
     expect(errors).toEqual({})
     expect(hasErrors(errors)).toBe(false)
   })
 
-  it('reports both fields at once rather than one at a time', () => {
-    const errors = validateRegistration({ email: 'nope', phone: 'nope' })
-    expect(Object.keys(errors).sort()).toEqual(['email', 'phone'])
+  it('reports every field at once rather than one at a time', () => {
+    const errors = validateRegistration({ email: 'nope', phone: 'nope', password: 'short' })
+    expect(Object.keys(errors).sort()).toEqual(['email', 'password', 'phone'])
     expect(hasErrors(errors)).toBe(true)
+  })
+})
+
+describe('validateNewPassword', () => {
+  it('accepts a password of exactly the minimum length', () => {
+    expect(validateNewPassword('0123456789')).toBeUndefined()
+  })
+
+  it('rejects one character short', () => {
+    expect(validateNewPassword('012345678')).toBe('Use at least 10 characters')
+  })
+
+  it('accepts exactly 72 characters, the most BCrypt can see', () => {
+    expect(validateNewPassword('a'.repeat(72))).toBeUndefined()
+  })
+
+  it('rejects 73 characters, because BCrypt would ignore the rest', () => {
+    // Not a made-up limit: BCrypt truncates at 72 bytes, so a 73-character password would be
+    // openable with its first 72 characters. The server rejects it too (PASSWORD_MAX_LENGTH).
+    expect(validateNewPassword('a'.repeat(73))).toBe('Use at most 72 characters')
+  })
+
+  it('asks for a password when the field is empty', () => {
+    expect(validateNewPassword('')).toBe('Choose a password')
+  })
+
+  it('counts spaces as characters rather than stripping them', () => {
+    // '  a  ' is 5 characters; if it were trimmed first it would be 1 and the message would be
+    // the same, so this asserts the length used is the untrimmed one via a 10-space password.
+    expect(validateNewPassword(' '.repeat(10))).toBeUndefined()
+  })
+})
+
+describe('validateLogin', () => {
+  it('accepts any non-empty password, however short', () => {
+    // Deliberate: restating the 10-character rule here would announce the policy and lock out
+    // anyone whose password predates it. The server answers a bad password with one 401.
+    expect(validateLogin({ email: 'hunter@example.com', password: 'x' })).toEqual({})
+  })
+
+  it('asks for a password when it is missing', () => {
+    expect(validateLogin({ email: 'hunter@example.com', password: '' }))
+      .toEqual({ password: 'Enter your password' })
+  })
+
+  it('still checks the email looks like an address', () => {
+    expect(validateLogin({ email: 'nope', password: 'correct-horse' }).email).toBeDefined()
+  })
+})
+
+describe('loginForSubmission', () => {
+  it('trims the email but not the password', () => {
+    expect(loginForSubmission({ email: ' a@b.c ', password: ' secret ' }))
+      .toEqual({ email: 'a@b.c', password: ' secret ' })
   })
 })

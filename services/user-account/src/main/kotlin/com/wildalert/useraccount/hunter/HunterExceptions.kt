@@ -17,3 +17,14 @@ class HunterNotFoundByInboundAddressException(address: String) :
 /** Thrown when registering an email that's already taken → mapped to HTTP 409. */
 class DuplicateEmailException(email: String) :
     RuntimeException("A hunter with email '$email' already exists")
+
+/**
+ * Thrown when a login fails, for *any* reason → mapped to HTTP 401.
+ *
+ * It carries no detail, and that is the point. Unknown email, wrong password, a hunter who
+ * predates passwords and has none, a deactivated account -- all four throw this one exception
+ * with this one message. Distinguishing them in the response would turn the login form into a
+ * tool for discovering which email addresses have accounts.
+ */
+class InvalidCredentialsException :
+    RuntimeException("Email or password is incorrect")

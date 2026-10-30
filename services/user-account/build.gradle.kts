@@ -41,10 +41,17 @@ dependencies {
     // Request validation (@Valid, @Email, ...)
     implementation("org.springframework.boot:spring-boot-starter-validation")
 
+    // Hunter logins: the password encoder and the filter chain that guards the browser surface.
+    // NOTE: adding this starter secures *every* endpoint by default. SecurityConfig re-opens the
+    // service-to-service endpoints explicitly — without it, notification's charge call starts
+    // getting 401s and every alert stops. See SecurityConfig for the full reasoning.
+    implementation("org.springframework.boot:spring-boot-starter-security")
+
     implementation("org.jetbrains.kotlin:kotlin-reflect")
 
     // Testing (JUnit 5, Mockito, MockMvc) — no Docker required
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.security:spring-security-test")
 }
 
 kotlin {

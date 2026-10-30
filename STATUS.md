@@ -1489,19 +1489,152 @@ and is switched on by the next.
     needs alerting. Until then the honest statement is that the product now **fails loudly and
     keeps the alerts** instead of losing them quietly.
 
+
+## Done — hunter login (Phase 8 slice 3, 2026-10-30)
+
+**A hunter can now come back.** Until this, registration showed the personal inbound address
+*once*: close the tab and it was gone, with no screen that would ever show it again and no way to
+see a credit balance at all. Since credit slice 3 notification actually charges per alert, "how
+much have I got left?" became a question the product could not answer. So: a password on
+registration, a login, a logout, and one authenticated page showing the balance and the address.
+
+- **Email + password, and no password reset — deliberately, not by omission.** Magic-link by email
+  is arguably the better fit for hunters who log in monthly (nothing to forget, and it verifies
+  the address the product is keyed on), but it needs an outbound email sender, which this project
+  has never had: Cloudflare Email Routing is inbound-only. Sign-in-with-Google was ruled out on
+  the audience — this is a Czech product and a large share of Czech users are on `seznam.cz`, who
+  would be locked out entirely. Password login costs nothing new, so it is what shipped, with the
+  reset flow waiting for outbound email. **Recorded as a gap, not hidden:** a hunter who forgets
+  their password currently needs a hand.
+- **user-account issues and validates the session; the gateway stays a dumb proxy.** The hunter
+  table and Postgres are both here, so credentials and sessions sit next to the data they
+  describe. The gateway gained three routes and nothing else — no session store at the edge,
+  which matters because it is a 512 MiB service with no datastore. The identity is asserted by
+  the service that owns the hunter row; the edge only forwards a cookie.
+- **A hand-rolled `hunter_session` table, not Spring Session JDBC**, on this repo's stated
+  principle that a framework should replace something you have already written by hand. An
+  in-memory `HttpSession` would simply be wrong: user-account runs on Cloud Run where a second
+  instance can appear at any moment, and a session in one instance's heap does not exist in the
+  other — a hunter would be logged out at random.
+- **The token is stored hashed (SHA-256), and it is unsalted on purpose.** A leak of
+  `hunter_session` must hand over nothing usable, but the lookup is *by* the token, so the hash
+  has to be deterministic. That looks like a mistake to anyone who knows passwords need salt,
+  which is why it carries a comment: the input is 32 bytes of `SecureRandom` (256 bits), so there
+  is nothing to brute-force. Deliberately unlike `InboundAddresses.newToken()`'s 12 characters of
+  a 32-character alphabet (~60 bits) — that is an email local-part a human types into a camera,
+  this is a bearer credential. A test pins the difference so nobody reaches for the existing
+  helper.
+- **The riskiest line in the slice was `spring-boot-starter-security` itself.** Adding it secures
+  *every* endpoint by default, and `POST /api/hunters/{id}/charges` is called by notification on
+  every recognized animal with no cookie and no Spring credential. Break it and the money never
+  moves, no SMS is sent, and nothing logs a cause — a silent outage. So `SecurityConfig` defaults
+  to `permitAll` and authenticates only `GET /api/me` and `DELETE /api/sessions`, with the reason
+  written in the file; defaulting the other way would leave every future service-to-service
+  endpoint one forgotten line from breaking. `SecurityConfigTest` runs the **real** filter chain
+  (the only `@WebMvcTest` here that does) and asserts the charge call still answers. Checked while
+  planning and worth knowing: notification's two `/charges` calls are the *only* cross-service
+  calls into user-account — email-ingestion no longer calls it at all, and nothing anywhere
+  deserializes `HunterResponse`.
+- **Every failed login answers identically**, verified live across all four causes: unknown email,
+  wrong password, a hunter whose `password_hash` is null, and a deactivated account. When there is
+  no hunter the encoder still runs against a throwaway hash, so an unknown address does not answer
+  in a millisecond while a known one takes BCrypt's ~100ms — that gap alone is enough to enumerate
+  who has an account. The `active` check comes *after* the password check for the same reason.
+  A test asserts the four messages are one distinct string, so a later "helpful" error fails the
+  build.
+- **Logout deletes the row, not just the cookie**, and the live check proves it the only way that
+  counts: capture the token, log out, replay the captured cookie by hand → 401. Clearing the
+  cookie alone would leave a token that still worked for anyone who had copied it.
+- **Registration logs the hunter straight in.** They have just chosen the password; asking them to
+  type it again is friction with no security gain, and it means the existing "here is your
+  address" screen flows into the dashboard instead of a dead end.
+- **Two bugs the integration tests caught that mocks could not have.**
+  1. `char(64)` for the token hash — Postgres reports it as `bpchar`, which `ddl-auto: validate`
+     rejects against a String mapping. `varchar(64)` is also simply better: `char` blank-pads, so
+     a padded 64-character hash compared against an unpadded one is a bug waiting to happen. V5
+     was unreleased, so it was edited and the dev database's V5 row dropped and re-applied.
+  2. The sweep's bulk JPQL delete left the persistence context believing the rows were still
+     there, so a `findById` in the same transaction cheerfully returned a deleted session. Fixed
+     with `clearAutomatically` — and that fix forced the better design below.
+- **`ExpiredSessionSweeper` is its own bean running `REQUIRES_NEW`**, because housekeeping must not
+  be able to disturb or fail the login it rides along with: the bulk delete clears the persistence
+  context, and a cleanup that throws must not cost somebody their session. The consequence is that
+  its test cannot be `@Transactional` — `REQUIRES_NEW` opens a transaction that cannot see the
+  test's uncommitted rows, so the test would fail while the code is right. It commits and cleans
+  up, like `CreditChargeConcurrencyTest`. Called on login rather than `@Scheduled` because on
+  Cloud Run with scale-to-zero a scheduled task runs only while an instance happens to be alive.
+- **Spring Boot's default `user` with a generated password is now excluded.** The security starter
+  was printing "Using generated security password: ..." at every startup. Nothing could use it
+  (basic and form login are disabled) so it was misleading log noise — but it is a real credential
+  the moment anyone re-enables either, so `UserDetailsServiceAutoConfiguration` is excluded. The
+  only identities this service recognises are hunters with sessions.
+- **No `react-router`, and that is now a decision rather than a deferral.** The session cookie
+  does the job a URL would: the app asks `GET /api/me` on load, so refresh, a reopened tab and a
+  visit tomorrow all land on the dashboard. Routes would cost a new npm dependency — which on
+  this network means an off-network `npm install` (see AGENTS.md) — plus an SPA fallback in the
+  gateway, which does not exist: any unknown path there is a 404 today. Worth revisiting when
+  there are enough screens to get lost between.
+- **`alertPriceMinor` is now on `HunterResponse`** so the dashboard can say "about 10 alerts left"
+  rather than "25.00 CZK", which is the number a hunter can actually act on. **Known duplication,
+  recorded rather than discovered later:** notification owns `billing.sms-cost-minor` (150) and
+  recognition will own its 100; those are the internal debit amounts, this is the hunter-facing
+  price, and it lives with the account that holds the money. Consolidate when recognition starts
+  charging.
+- **The dashboard is honest about a zero balance.** Production runs `SIGNUP_GRANT_MINOR=0` until
+  there is abuse protection in front of the form, so a hunter registering today sees `0.00 CZK`.
+  The panel says why and what to do instead of looking broken.
+- **A surprise in the registration contract, recorded because it reads like a bug.** An *absent*
+  `password` key fails in Jackson before bean validation runs (the Kotlin property is non-null),
+  so it is a bare 400 with no `errors` map, while an *empty* string gets a per-field message.
+  Pre-existing for every required field, harmless because the React form always sends all three
+  keys, and it would matter to a hand-written API client. Both cases are pinned by tests.
+- **`InboundAddressPanel` gained `moveFocusOnMount`.** It used to take focus on mount, which is
+  right when the registration form has just vanished and wrong on a dashboard that loaded cold —
+  a returning hunter would have focus yanked away on every visit.
+- **Verified live, end to end, against the running service on real Postgres.** Register → 201 with
+  an `HttpOnly; SameSite=Lax` cookie and a 2500 balance; `GET /api/me` with the cookie → 200,
+  without → 401 as `application/problem+json`; a refused login sets **zero** cookies; logout →
+  204 plus a `Max-Age=0` cookie and a replayed token → 401; a 73-character password → 400 against
+  the password field. **Regressions both held:** the charge call answered **200** with no cookie
+  and moved the balance 2500 → 2350, and `by-email` still answers unauthenticated.
+- **Tests:** **269 Kotlin across the repo, 0 failures** (from 196) — user-account 92, gateway 10,
+  notification 95, detection-history 44, email-ingestion 28 — and 49 in `web/`, plus `npm run build`
+  (`tsc --noEmit` + a real Vite build) clean. The gateway tests now prove `Set-Cookie` survives
+  the proxy in both directions, which was assumed rather than checked before; a proxy that
+  dropped it would look exactly like a broken login. `ApiRoutesTest`'s stub response was also
+  stale — still carrying `"plan":"FREE"`, a field dropped in V3, and no `creditBalanceMinor` —
+  and is now a faithful copy of the real contract.
+- **Still open, and all of it deliberate.** **No password reset** (needs outbound email). **No
+  brute-force protection** — a public login form is a credential-stuffing target and this slice
+  adds nothing against it; it belongs with Turnstile and arguably should not reach production
+  ahead of it. **CSRF is disabled**, justified by the `SameSite=Lax` cookie and the fact that the
+  only authenticated state-changing endpoint is the logout — revisit the moment the dashboard can
+  spend money. **Pre-existing production hunters have a null `password_hash`** and cannot log in
+  until they re-register or a hash is set by hand. **Nobody has looked at the new screens in a
+  browser yet** — the data path is proven end to end, the pixels are not.
+- **Deploy consequences:** a new user-account revision (with `SESSION_COOKIE_SECURE=true` — a
+  `Secure` cookie is silently not set over plain http, which is why it is false by default and
+  would make local dev look like a broken login otherwise) and a new gateway image, since the
+  gateway bundles the React build.
+
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
   deployed and the form is publicly reachable. **Turnstile is the control**; Cloudflare's free
   rate limiting (one rule, IP only, 10-second window) is a flood brake and nothing more. See
   slice 2 and the domain slice below.
-- **8 — React frontend** — slice 1 (registration UI) and slice 2 (the gateway that serves it)
-  built and tested, plus the detection-history service behind the eventual dashboard; all above.
+- **8 — React frontend** — slice 1 (registration UI), slice 2 (the gateway that serves it) and
+  slice 3 (hunter login + a credit and address page) built and tested, plus the detection-history
+  service behind the eventual dashboard; all above.
   **The gateway is deployed** (2026-10-29, `gateway-00001-p5f`) and serves the form on its
   `run.app` URL; `deploy/site-worker/` puts it on `wildalert.app`, awaiting two DNS records and a
-  `wrangler deploy`. Still to do after that: phone verification, the dashboard itself, presigned
-  photo URLs and auth.
-- **9 — Scale / auth / billing.**
+  `wrangler deploy`. Still to do after that: phone verification, the detection list on the
+  dashboard, presigned photo URLs, a password reset (needs outbound email) and brute-force
+  protection on the login form.
+- **9 — Scale / auth / billing.** Hunter authentication is **partly done** as of slice 3 above: a
+  hunter can sign in and read their own record. What remains under this heading is the password
+  reset, brute-force protection, authorizing detection-history's read API (it still identifies a
+  hunter by an inbound address in a query parameter, so it must stay private), and billing.
 
 ## Key decisions
 - **Recognition model = DeepFaune** (not SpeciesNet) — targets European animals; chosen via a

@@ -36,7 +36,8 @@ class ApiRoutesTest {
 
     @Test
     fun `forwards a registration to user-account and returns its response unchanged`() {
-        val body = """{"email":"hunter@example.com","phone":"+420123456789","plan":"FREE"}"""
+        val body =
+            """{"email":"hunter@example.com","phone":"+420123456789","password":"correct-horse"}"""
 
         val response = rest.exchange("/api/hunters", HttpMethod.POST, jsonEntity(body), String::class.java)
 
@@ -102,6 +103,59 @@ class ApiRoutesTest {
     }
 
     @Test
+    fun `a Set-Cookie from user-account reaches the browser intact`() {
+        // The quiet failure this guards against: if the proxy dropped or rewrote Set-Cookie, the
+        // login would answer 200 with the right body and simply never log anybody in -- and
+        // nothing in user-account's logs would show a problem.
+        val response = rest.exchange(
+            "/api/sessions",
+            HttpMethod.POST,
+            jsonEntity("""{"email":"hunter@example.com","password":"correct-horse"}"""),
+            String::class.java,
+        )
+
+        val setCookie = response.headers[HttpHeaders.SET_COOKIE]
+        assertThat(setCookie).isNotNull().hasSize(1)
+        assertThat(setCookie!!.single())
+            .contains("wa_session=a-session-token")
+            // The attributes matter as much as the value: lose HttpOnly or SameSite and the
+            // cookie still works while its protections are gone.
+            .contains("HttpOnly")
+            .contains("SameSite=Lax")
+            .contains("Path=/")
+    }
+
+    @Test
+    fun `a session cookie from the browser reaches user-account`() {
+        // The other direction. Without this, GET /api/me would arrive unauthenticated and answer
+        // 401 for a hunter who is in fact logged in.
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "wa_session=a-session-token") }
+
+        rest.exchange("/api/me", HttpMethod.GET, HttpEntity<Void>(headers), String::class.java)
+
+        assertThat(received.single().cookie).isEqualTo("wa_session=a-session-token")
+    }
+
+    @Test
+    fun `proxies the session routes the React app needs`() {
+        data class Call(val method: HttpMethod, val path: String)
+        val allowed = listOf(
+            Call(HttpMethod.POST, "/api/sessions"),
+            Call(HttpMethod.DELETE, "/api/sessions"),
+            Call(HttpMethod.GET, "/api/me"),
+        )
+
+        for (call in allowed) {
+            received.clear()
+            rest.exchange(call.path, call.method, jsonEntity("{}"), String::class.java)
+            assertThat(received)
+                .describedAs("%s %s must reach user-account", call.method, call.path)
+                .hasSize(1)
+            assertThat(received.single().path).isEqualTo(call.path)
+        }
+    }
+
+    @Test
     fun `keeps the health endpoint open for Cloud Run probes`() {
         assertThat(rest.getForEntity("/actuator/health", String::class.java).statusCode)
             .isEqualTo(HttpStatus.OK)
@@ -117,6 +171,7 @@ class ApiRoutesTest {
         val path: String,
         val body: String,
         val authorization: String?,
+        val cookie: String?,
     )
 
     companion object {
@@ -140,19 +195,31 @@ class ApiRoutesTest {
                 path = exchange.requestURI.path,
                 body = body,
                 authorization = exchange.requestHeaders.getFirst("Authorization"),
+                cookie = exchange.requestHeaders.getFirst("Cookie"),
             )
 
+            // Kept in step with user-account's real HunterResponse. It previously still carried
+            // "plan":"FREE" -- a field dropped in migration V3 -- and no creditBalanceMinor,
+            // which the test did not notice because it only asserted on inboundAddress. A stub
+            // that has drifted from the contract tests nothing.
             val response = """
                 {"id":"22222222-2222-2222-2222-222222222222","email":"hunter@example.com",
-                "phone":"+420123456789","plan":"FREE","active":true,
+                "phone":"+420123456789","active":true,
                 "inboundAddress":"abc123@wildalert.local",
+                "creditBalanceMinor":2500,"alertPriceMinor":250,
                 "createdAt":"2026-10-26T12:00:00Z","updatedAt":"2026-10-26T12:00:00Z"}
             """.trimIndent().replace("\n", "")
             val bytes = response.toByteArray(StandardCharsets.UTF_8)
             exchange.responseHeaders.add("Content-Type", "application/json")
+            // Every stub response sets a cookie, so any proxied route can be checked for the one
+            // thing that would silently break logging in.
+            exchange.responseHeaders.add("Set-Cookie", SESSION_COOKIE)
             exchange.sendResponseHeaders(201, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
         }
+
+        private const val SESSION_COOKIE =
+            "wa_session=a-session-token; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax"
 
         @JvmStatic
         @DynamicPropertySource

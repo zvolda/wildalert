@@ -172,6 +172,10 @@ services:
       # origin is closed with x-origin-secret), a non-zero grant makes every scripted signup worth
       # real SMS spend. See STATUS.md, credit slice 3.
       SIGNUP_GRANT_MINOR: ${SIGNUP_GRANT_MINOR:-2500}
+      # Stated explicitly even though false is the application default, because the prod/dev
+      # difference is the whole point: a `Secure` cookie is never set over plain http, so this
+      # must stay false for http://localhost:5173 and must be **true** on the Cloud Run revision.
+      SESSION_COOKIE_SECURE: "false"
     ports:
       - "8081:8081"
     depends_on:
