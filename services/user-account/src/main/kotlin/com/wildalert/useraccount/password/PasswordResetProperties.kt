@@ -28,6 +28,7 @@ data class PasswordResetProperties(
     /** Where the reset link points. Configuration, never the request's `Host` -- see above. */
     val publicBaseUrl: String = "http://localhost:5173",
 
-    /** The `From` address on the mail. Must be on a domain the sending provider is set up for. */
-    val fromAddress: String = "no-reply@wildalert.app",
+    // The `From` address used to live here and was never read -- see EmailProperties, which now
+    // owns it, because the sender is what needs it and the address belongs to the domain rather
+    // than to this one flow.
 )

@@ -29,6 +29,7 @@ class PasswordResetService(
     private val hunters: HunterRepository,
     private val tokens: PasswordResetTokenRepository,
     private val sessions: SessionService,
+    private val issuer: PasswordResetTokenIssuer,
     private val sweeper: ExpiredResetTokenSweeper,
     private val passwordEncoder: PasswordEncoder,
     private val email: EmailSender,
@@ -50,52 +51,46 @@ class PasswordResetService(
      * - throttled: a hunter who clicks twice gets one mail, and an attacker typing someone
      *   else's address cannot use us to flood their inbox.
      */
-    @Transactional
     fun request(rawEmail: String) {
         // Housekeeping first, in its own transaction, so a backlog never accumulates on the one
         // path that is naturally rare. See ExpiredResetTokenSweeper.
         sweeper.sweep()
 
-        val normalized = rawEmail.trim().lowercase()
-        val hunter = hunters.findByEmail(normalized)
-        if (hunter == null) {
-            log.info("Password reset requested for an address with no account")
-            return
+        val issued = issuer.issue(rawEmail) ?: return
+
+        // **Deliberately outside the transaction above**, and both reasons only became visible
+        // once a real provider replaced the logging fake:
+        //
+        // 1. A send is an HTTPS call to a third party. Inside the transaction it would hold a
+        //    Cloud SQL connection open for its whole duration -- on a db-f1-micro, with a
+        //    provider having a bad minute, that is the connection pool spent on waiting.
+        // 2. A throw would have rolled the token back *and* escaped to the controller as a 500 --
+        //    while an address with no account returns 202, because it never reaches a send at
+        //    all. That difference is an account-existence oracle, which is the one thing this
+        //    whole flow is written to avoid.
+        try {
+            email.send(
+                EmailMessage(
+                    to = issued.email,
+                    subject = "Reset your WildAlert password",
+                    body = resetBody(issued.rawToken),
+                ),
+            )
+            log.info("Password reset link sent for hunter {}", issued.hunterId)
+        } catch (ex: RuntimeException) {
+            // Swallowed on purpose -- see (2). The token is thrown away rather than left behind:
+            // a token nobody received is useless, and because the throttle is keyed on an unused
+            // *fresh* token, deleting it also lets the hunter try again immediately instead of
+            // waiting out a window for a mail that never came.
+            issuer.discard(issued.hunterId)
+            log.error(
+                "Password reset email failed for hunter {}; token discarded so a retry is not throttled",
+                issued.hunterId,
+                ex,
+            )
         }
-        if (!hunter.active || hunter.passwordHash == null) {
-            log.info("Password reset requested for hunter {} which cannot log in", hunter.id)
-            return
-        }
-
-        val hunterId = hunter.id!!
-        val cutoff = Instant.now().minus(properties.throttle)
-        if (tokens.existsByHunterIdAndUsedAtIsNullAndCreatedAtAfter(hunterId, cutoff)) {
-            log.info("Password reset for hunter {} throttled; a fresh link was already sent", hunterId)
-            return
-        }
-
-        // One working link at a time. Asking twice should replace the first mail's token, not add
-        // a second key to the same door.
-        tokens.deleteUnusedByHunterId(hunterId)
-
-        val raw = SessionService.newToken()
-        tokens.save(
-            PasswordResetToken(
-                tokenHash = SessionService.hash(raw),
-                hunterId = hunterId,
-                expiresAt = Instant.now().plus(properties.ttl),
-            ),
-        )
-
-        email.send(
-            EmailMessage(
-                to = hunter.email,
-                subject = "Reset your WildAlert password",
-                body = resetBody(raw),
-            ),
-        )
-        log.info("Password reset link sent for hunter {}", hunterId)
     }
+
 
     /**
      * Spend a token and set the new password, or throw [InvalidResetTokenException].
