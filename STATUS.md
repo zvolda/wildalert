@@ -1759,6 +1759,58 @@ include, DKIM and a DMARC record, put the API key in Secret Manager with a **per
 `PUBLIC_BASE_URL=https://wildalert.app` with `--update-env-vars`. Until then a reset mail is
 logged, not sent. **Turnstile belongs in front of this form** as much as registration and login —
 the throttle is a courtesy to a hunter's inbox, not an abuse control.
+
+### Deployed to prod (2026-10-31)
+
+Both services live from image tag **`d870772`** (merged main, PRs #34 + #35):
+**`user-account-00006-kn4`** and **`gateway-00003-kgj`**.
+
+- **Flyway applied V6 to production Cloud SQL**: "Current version of schema: 5" → "Migrating
+  schema to version 6 - create password reset token" → "Successfully applied 1 migration … now at
+  version v6" in 0.184s. The startup probe points at `/actuator/health/readiness`, which includes
+  `db`, so a failed migration would have left the revision never serving and prod still on
+  `00005-sjb` — the same safety net that covered V5.
+- **`PUBLIC_BASE_URL=https://wildalert.app` is set on the revision**, so reset links point at the
+  real site rather than the `http://localhost:5173` default. Set with `--update-env-vars`, and the
+  revision afterwards still carries all six: `DATABASE_URL`, `POSTGRES_USER`,
+  `INBOUND_EMAIL_DOMAIN`, the `POSTGRES_PASSWORD` secret reference, `SESSION_COOKIE_SECURE` and
+  the new one. `--set-env-vars` would have dropped the first five.
+- **Ordering was user-account first, deliberately, and this time it was right.** Every API change
+  in this slice is **additive** — three new endpoints, no existing contract altered — so the old
+  UI was unaffected while the new backend was live. That is the opposite of the hunter-login
+  deploy, where `password` became a *required* field on `POST /api/hunters` and the old client
+  broke for six minutes. The rule that distinguishes them: when a field becomes **required**,
+  client and server ship together or the client ships first; when endpoints are only **added**,
+  the server goes first.
+- **Verified through the public edge, not the private services.** `wildalert.app` 200; the served
+  bundle is `assets/index-CrB20mn5.js`, byte-identical in name to what the local `vite build`
+  produced, and it contains the new copy ("Forgot your password?", "Change password", "Choose a new
+  password"). `POST /api/me/password` with no cookie answers **401 rather than 404**, and
+  `POST /api/password-resets` answers **400** to a malformed address and **202** to an unknown one
+  — which together prove the routes exist *and* that the gateway's ID token is being accepted.
+  `confirm` with a bogus token gives the one generic 400 and a body that says only "This password
+  reset link is no longer valid. Please request a new one." The allowlist is still tight:
+  `by-email` and `by-inbound-address` both **404 at the gateway**.
+- **No hunter was registered by this check**, unlike the hunter-login deploy, which left
+  `deploy-check-1793381934@example.com` in production needing a Cloud SQL session to remove. The
+  reset-request path is readable with an address that deliberately has no account, so the 202 path
+  and the 400/401 paths can all be exercised without writing a row.
+
+**The known trade, accepted deliberately: the "Forgot password?" link is live and cannot deliver.**
+`EMAIL_PROVIDER` is unset, so it defaults to the logging fake: a hunter gets "check your inbox"
+and no mail ever arrives, because there is no sending provider yet. **Resend was chosen**
+(2026-10-31) — one HTTPS POST from Kotlin, a single API key, their generated DKIM records — and
+wiring it is the next slice. Until then the honest state is that *changing* a password works end
+to end in production and *resetting* a forgotten one does not. A hunter who needs one is still
+helped by hand, with the SQL recipe in `docs/password-reset.md`.
+
+**Build notes.** Merging PR #35 fired all four `--branch=main` triggers automatically, but the
+`europe-west3` queue serialises and `user-account` sat behind `recognition` (torch plus model
+weights, the longest build in the repo). Re-submitting the same config with **no `--region`** built
+both images in the **global** region instead — `gateway` in 3m01s, `user-account` in 1m46s — and
+they still pushed to the `europe-west3` repository. `gateway` has **no trigger at all**, so it
+needs a manual `gcloud builds submit` with `--service-account=…wildalert-cloudbuild@…` every time;
+creating `gateway-main` remains the obvious follow-up and would have made this deploy two commands.
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
@@ -1792,6 +1844,12 @@ the throttle is a courtesy to a hunter's inbox, not an abuse control.
 - Recognition & SMS are cheap/free; **SMS dominates cost** (~90%).
 
 ## Known gaps / follow-ups
+- **The "Forgot password?" link is live on `wildalert.app` and cannot deliver an email**
+  (2026-10-31). `EMAIL_PROVIDER` is unset, so `LoggingEmailSender` is active: the request is
+  accepted, 202 comes back, the link is logged at DEBUG and no mail is sent. A hunter sees "check
+  your inbox" and waits forever. Accepted knowingly at deploy time to get the working
+  change-password panel out; **Resend is chosen and wiring it is the next slice**. Changing a
+  password works end to end — only *resetting a forgotten one* is the dead end.
 - **Nothing watches the gateway-credit warning yet.** The low-balance line is in Cloud Logging and
   the dead-letter topic fills if the account empties, but neither reaches a human on its own — it
   needs a log-based alert policy, with Phase 7's logging/metrics item.
