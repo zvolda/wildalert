@@ -113,18 +113,27 @@ password-reset:
   # cloud: PUBLIC_BASE_URL=https://wildalert.app (the gateway serves the app at the apex).
   public-base-url: ${PUBLIC_BASE_URL:http://localhost:5173}
 
-  # The From address. Must be on a domain the sending provider has been verified for, so changing
-  # this is a DNS job as much as a config one -- see docs/password-reset.md.
-  from-address: ${PASSWORD_RESET_FROM:no-reply@wildalert.app}
-
 email:
   # Which EmailSender is active. `logging` is the fake and the default, exactly as sms.provider
   # and events.provider are: the service runs and the tests pass with no provider account and no
-  # DNS. **No real provider is wired up yet** -- picking one (Resend/Postmark/SES, or Cloudflare
-  # Email Sending) plus its SPF/DKIM/DMARC records is the remaining work in
-  # docs/password-reset.md. Until then a reset mail is logged, not sent, and a hunter who needs
-  # one has to be helped by hand.
+  # DNS. Set EMAIL_PROVIDER=resend on the revision once the key and the DNS records exist --
+  # until then a reset mail is logged, not sent, and a hunter who needs one is helped by hand.
   provider: ${EMAIL_PROVIDER:logging}
+
+  # The From address. Must be on a domain the sending provider has verified, so changing it is a
+  # DNS job as much as a config one -- see docs/password-reset.md. A display name is worth having:
+  # "WildAlert" in an inbox beats a bare no-reply address for a mail people are asked to trust.
+  #
+  # It used to be password-reset.from-address and nothing ever read it. Kept in mind here: dead
+  # config is indistinguishable from working config when you are only reading this file.
+  from-address: ${EMAIL_FROM:WildAlert <no-reply@wildalert.app>}
+
+  resend:
+    # Resend's API key (re_...). Secret Manager in the cloud, never a literal here. Startup fails
+    # loudly if provider=resend and this is empty, so a forgotten secret is a revision that never
+    # serves rather than a reset flow that silently sends nothing.
+    api-key: ${RESEND_API_KEY:}
+    base-url: ${RESEND_BASE_URL:https://api.resend.com}
 
 hunters:
   # Domain of hunters' personal inbound addresses (<token>@<domain>). In prod this is the

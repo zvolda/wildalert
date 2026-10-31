@@ -168,20 +168,62 @@ are resetting — must not land them on a dashboard instead. The spent token is 
 the address bar with `replaceState`, so a refresh does not retry a dead link and the history keeps
 no credential-shaped URL.
 
-## Left to do outside the code
+## Provider: Resend (decided 2026-10-31, code done)
 
-- **Pick a sending provider.** Resend or Postmark (simplest API, good reputation), AWS SES
-  (cheapest at volume, more setup), or **Cloudflare Email Sending** — no new vendor relationship,
-  which matters here, but it sends from a Worker binding, so Kotlin would call a small Worker
-  endpoint rather than the provider directly. A new vendor needs the usual licence/policy check.
-- **DNS:** the provider's SPF include added alongside Cloudflare's, DKIM CNAMEs, and a `_dmarc`
-  TXT record (there is none today). Dashboard work — `wrangler`'s token is `zone:read`.
-- **Secret:** the provider API key in Secret Manager with a **per-secret** binding to
-  user-account's service account, not the project-level `secretAccessor` it currently holds (that
-  over-grant is already a tracked Phase 7 item; do not widen it further here).
-- **Env on the revision:** `EMAIL_PROVIDER`, `PUBLIC_BASE_URL=https://wildalert.app`, the sender
-  address. Use `--update-env-vars`, never `--set-env-vars`, which drops `DATABASE_URL`,
-  `POSTGRES_USER`, `INBOUND_EMAIL_DOMAIN` and the password secret reference.
+**Resend**, over Postmark and SES: one HTTPS POST, a single API key, DKIM records it generates —
+the least new surface for a project whose first outbound email this is. Cloudflare Email Sending
+would have added no vendor relationship, but it is a **Worker binding rather than an API**, so
+Kotlin would have had to call a Worker we then own and secure as a send relay.
+
+`ResendEmailSender` is written and tested behind `email.provider=resend`. It does not retry: a
+failure is caught by `PasswordResetService`, which discards the unsent token, and a hunter
+clicking the button again is a better retry than one we invent.
+
+### Still to do outside the code — this is what gates delivery
+
+1. **Create the Resend account** and verify the `wildalert.app` sending domain. Only a human can
+   do this part.
+2. **DNS** (Cloudflare dashboard — `wrangler`'s token is `zone:read`): add Resend's DKIM CNAMEs,
+   add its SPF include **alongside** Cloudflare's existing one rather than replacing it
+   (`v=spf1 include:_spf.mx.cloudflare.net include:<resend> ~all`), and add a `_dmarc` TXT record
+   — there is none today. **Do not touch MX**, which belongs to Email Routing and carries every
+   hunter's inbound `<token>@wildalert.app` address.
+3. **Secret:** `gcloud secrets create wildalert-resend-api-key`, then bind
+   `roles/secretmanager.secretAccessor` on **that one secret** to user-account's service account.
+   Not at project level — user-account already holds that over-grant and it is a tracked Phase 7
+   item; do not widen it further. email-ingestion's per-secret bindings are the pattern.
+4. **Revision env:** `EMAIL_PROVIDER=resend`, the secret mounted as `RESEND_API_KEY`, and
+   optionally `EMAIL_FROM`. `PUBLIC_BASE_URL=https://wildalert.app` is already set (2026-10-31).
+   Use `--update-env-vars`, never `--set-env-vars`, which drops `DATABASE_URL`, `POSTGRES_USER`,
+   `INBOUND_EMAIL_DOMAIN` and the password secret reference.
+
+**A missing key is a revision that never serves, not a flow that silently fails.**
+`ResendEmailSender` requires a non-blank key in its `init`, so `EMAIL_PROVIDER=resend` without the
+secret fails startup — verified live: exit code 1, the guard's own message, and
+"Started UserAccountApplication" never printed. The deliberate opposite of
+`INBOUND_EMAIL_DOMAIN`, which was once unset and nobody was ever texted.
+
+### Two things the real sender exposed that the fake had hidden
+
+- **A send inside the `@Transactional` request would hold a Cloud SQL connection** for the whole
+  HTTPS call. On `db-f1-micro`, with a provider having a bad minute, that is the connection pool
+  spent on waiting. The database work now lives in `PasswordResetTokenIssuer` and commits before
+  anything is sent.
+- **A send failure would have escaped as a 500 — an account-existence oracle.** An address with no
+  account never reaches a send, so it always answers 202; a *real* address during an outage would
+  have answered 500, which is exactly the difference this flow exists to hide. The failure is now
+  caught, the unsent token discarded (which also clears the throttle, so the hunter can retry at
+  once), and the answer stays 202. Verified live against an unreachable Resend: unknown address
+  202, real address 202, immediate retry 202, nothing logged as sent, and **no token left in the
+  database**.
+- `PasswordResetTokenIssuer` is a **separate bean** because Spring's `@Transactional` is
+  proxy-based, so a call between two methods of the same class bypasses it entirely and the
+  annotation is silently ignored. The session and token sweepers are separate beans for the same
+  reason.
+- **`password-reset.from-address` was dead config** — declared, documented, configured, and never
+  read by anything. The first real sender needed it, which is how it was found. It now lives on
+  `EmailProperties` as `email.from-address`, where the sender uses it, because the From address
+  belongs to the verified domain rather than to this one flow.
 - **Deploy order:** slices A and B are purely additive to the API, so user-account may ship before
   the UI. That is the opposite of the hunter-login deploy, where `password` became a *required*
   field and the old client broke for six minutes — the rule being: when a field becomes required,

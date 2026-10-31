@@ -12,13 +12,16 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.BDDMockito.given
 import org.mockito.BDDMockito.never
 import org.mockito.BDDMockito.then
+import org.mockito.Mockito.times
 import org.mockito.Mockito.mock
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.util.ReflectionTestUtils
+import org.springframework.web.client.RestClientException
 import java.time.Duration
 import java.time.Instant
 import java.util.Optional
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Pure unit tests: no Spring context, no database.
@@ -52,12 +55,16 @@ class PasswordResetServiceTest {
 
     private val sent = mutableListOf<EmailMessage>()
 
+    /** Flipped on by the one test that needs the provider to be having a bad minute. */
+    private val failing = AtomicBoolean(false)
+
     /**
      * A recording stand-in. An object expression rather than a lambda because `EmailSender` is a
      * Kotlin interface, and SAM conversion applies only to Java ones.
      */
     private val email = object : EmailSender {
         override fun send(message: EmailMessage) {
+            if (failing.get()) throw RestClientException("Resend is down")
             sent += message
         }
     }
@@ -69,11 +76,20 @@ class PasswordResetServiceTest {
         ttl = Duration.ofHours(1),
         throttle = Duration.ofMinutes(5),
         publicBaseUrl = "https://wildalert.test",
-        fromAddress = "no-reply@wildalert.test",
     )
 
-    private val service =
-        PasswordResetService(hunters, tokens, sessions, sweeper, passwordEncoder, email, properties)
+    /**
+     * A **real** issuer over the same mocked repositories, rather than a mock of it.
+     *
+     * The issuer is a separate bean only because Spring's `@Transactional` cannot work through a
+     * self-invocation (see its class comment) — it is not a seam worth faking, and mocking it
+     * here would turn every "request does nothing for X" case below into a test of a stub.
+     */
+    private val issuer = PasswordResetTokenIssuer(hunters, tokens, properties)
+
+    private val service = PasswordResetService(
+        hunters, tokens, sessions, issuer, sweeper, passwordEncoder, email, properties,
+    )
 
     @BeforeEach
     fun recordSaves() {
@@ -190,6 +206,35 @@ class PasswordResetServiceTest {
 
         // Even on the path that does nothing else: the sweep rides on the rare event by design.
         then(sweeper).should().sweep()
+    }
+
+    @Test
+    fun `a failed send throws the token away instead of leaving a dead one behind`() {
+        val hunter = activeHunter()
+        given(hunters.findByEmail("hunter@example.com")).willReturn(hunter)
+        failing.set(true)
+
+        // No exception escapes, and that is the point: an address with no account answers 202
+        // without ever reaching a send, so a provider outage that produced a 500 here would tell
+        // an attacker which addresses are registered.
+        service.request("hunter@example.com")
+
+        // Called twice: once before issuing (one link at a time), once to discard the unsent one.
+        // The second is what matters -- the throttle is keyed on a fresh unused token, so leaving
+        // it would lock the hunter out of retrying for a mail that never arrived.
+        then(tokens).should(times(2)).deleteUnusedByHunterId(hunter.id!!)
+    }
+
+    @Test
+    fun `a successful send keeps the token`() {
+        val hunter = activeHunter()
+        given(hunters.findByEmail("hunter@example.com")).willReturn(hunter)
+
+        service.request("hunter@example.com")
+
+        // Only the pre-issue cleanup. The counterpart to the test above: a delivered link must
+        // survive, or the mail the hunter is holding is already dead.
+        then(tokens).should(times(1)).deleteUnusedByHunterId(hunter.id!!)
     }
 
     // ---------- confirm ----------

@@ -1811,6 +1811,77 @@ both images in the **global** region instead — `gateway` in 3m01s, `user-accou
 they still pushed to the `europe-west3` repository. `gateway` has **no trigger at all**, so it
 needs a manual `gcloud builds submit` with `--service-account=…wildalert-cloudbuild@…` every time;
 creating `gateway-main` remains the obvious follow-up and would have made this deploy two commands.
+
+## Done — Resend wired behind EmailSender (2026-10-31)
+
+**Resend chosen** over Postmark and SES: one HTTPS POST, a single API key, DKIM records it
+generates. Cloudflare Email Sending would have added no vendor relationship — appealing here — but
+it is a **Worker binding rather than an API**, so Kotlin would have had to call a Worker we then
+own and secure as a send relay. `ResendEmailSender` sits behind `email.provider=resend`, so
+`LoggingEmailSender` is still the default and no test needs a key.
+
+**It deliberately does not retry.** A failure propagates to `PasswordResetService`, which discards
+the unsent token; a hunter clicking the button again is a better retry than one we invent, and a
+retry loop would hold the request open waiting for a 202 that says nothing about delivery anyway.
+
+**A missing key fails startup rather than the flow.** `ResendEmailSender` requires a non-blank key
+in `init`, so `EMAIL_PROVIDER=resend` without the secret is a revision that never serves — visible
+as a deploy that did not happen. The deliberate opposite of `INBOUND_EMAIL_DOMAIN`, which was once
+unset and nobody was ever texted. Verified live: exit code 1, the guard's own message, and
+"Started UserAccountApplication" never printed.
+
+### Three things the real sender exposed that the logging fake had hidden
+
+These are the reason this slice touched more than one new file, and all three were invisible while
+the only implementation could not fail.
+
+1. **A send inside the `@Transactional` request held a Cloud SQL connection for the whole HTTPS
+   call.** On `db-f1-micro`, with a provider having a bad minute, that is the connection pool spent
+   on waiting. The database work moved into **`PasswordResetTokenIssuer`**, which commits before
+   anything is sent.
+2. **A send failure would have escaped as a 500 — an account-existence oracle.** An address with
+   no account never reaches a send, so it always answers 202; a *real* address during an outage
+   would have answered 500. That difference is precisely what the whole flow is written to hide.
+   Now caught, the unsent token discarded, and the answer stays 202. Discarding also *clears the
+   throttle*, which is keyed on a fresh unused token — so a hunter can retry immediately instead
+   of waiting five minutes for a mail that never came.
+3. **`PasswordResetTokenIssuer` had to be a separate bean.** The first version put `issue()` and
+   `discard()` on `PasswordResetService` itself, where `@Transactional` would have been **silently
+   ignored**: Spring's transaction support is proxy-based, and a call between two methods of the
+   same class never passes through the proxy. The session and token sweepers are separate beans
+   for exactly this reason, which is what made the mistake recognisable.
+
+**Dead config found and fixed.** `password-reset.from-address` was declared on
+`PasswordResetProperties`, documented in `application.yml`, set in a test — and **read by
+nothing**. The first real sender needed a From address, which is how it surfaced. It now lives on
+`EmailProperties` as `email.from-address`, because the address belongs to the DNS-verified domain
+rather than to this one flow. Worth remembering: dead config is indistinguishable from working
+config to anyone reading `application.yml`.
+
+### Verification
+
+116 tests green in user-account (`PasswordResetServiceTest` 16, `ResendEmailSenderTest` 5). The
+Resend tests use `MockRestServiceServer` bound to the real `RestClient.Builder`, as
+`GoSmsSenderTest` does, and pin the request shape: bearer key, `from`, `to` as a list, `text` and
+**no `html`**, plus 401, Resend's 422 "domain is not verified" (the likeliest first-deploy
+failure), a 200 with no id, and the empty-key guard.
+
+Then live, against a deliberately unreachable Resend (`base-url=http://localhost:9`), because the
+oracle and the discard cannot be proven by unit tests: unknown address **202**, real address
+**202** rather than 500, an immediate retry **202** (not throttled), the failure logged twice,
+nothing logged as sent, and **zero rows left in `password_reset_token`** — checked in Postgres, not
+just in the log. Test rows deleted afterwards.
+
+### Not deployed, and what gates it
+
+The code is merged but **`EMAIL_PROVIDER` stays unset in production**, so the live "Forgot
+password?" link is still the dead end recorded in Known gaps. Turning it on needs, in order:
+a **Resend account** with `wildalert.app` verified (a human step); **DNS** — Resend's DKIM CNAMEs,
+its SPF include *alongside* Cloudflare's rather than replacing it, and a `_dmarc` record, with
+**MX untouched** since that is Email Routing carrying every hunter's inbound address; the key in
+Secret Manager with a **per-secret** binding (not the project-level `secretAccessor` user-account
+already over-holds); then `EMAIL_PROVIDER=resend` and `RESEND_API_KEY` via `--update-env-vars`.
+Full checklist in [`docs/password-reset.md`](./docs/password-reset.md).
 ## Remaining phases
 - **7 — Hardening & cost control** (tune threshold, smart-SMS to cut cost, logging/metrics,
   admin auth). **Registration abuse control is now live work, not future work** — the gateway is
@@ -1848,8 +1919,12 @@ creating `gateway-main` remains the obvious follow-up and would have made this d
   (2026-10-31). `EMAIL_PROVIDER` is unset, so `LoggingEmailSender` is active: the request is
   accepted, 202 comes back, the link is logged at DEBUG and no mail is sent. A hunter sees "check
   your inbox" and waits forever. Accepted knowingly at deploy time to get the working
-  change-password panel out; **Resend is chosen and wiring it is the next slice**. Changing a
-  password works end to end — only *resetting a forgotten one* is the dead end.
+  change-password panel out. Changing a password works end to end — only *resetting a forgotten
+  one* is the dead end. **The Resend sender is now written, tested and merged** (2026-10-31), so
+  what remains is not code: a Resend account with `wildalert.app` verified, the DKIM/SPF/`_dmarc`
+  records, the key in Secret Manager with a per-secret binding, then `EMAIL_PROVIDER=resend` on
+  the revision. Checklist in `docs/password-reset.md`. Note that turning it on with the key
+  missing is a revision that never serves, by design — so set the secret before the env var.
 - **Nothing watches the gateway-credit warning yet.** The low-balance line is in Cloud Logging and
   the dead-letter topic fills if the account empties, but neither reaches a human on its own — it
   needs a log-based alert policy, with Phase 7's logging/metrics item.
